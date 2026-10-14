@@ -26,7 +26,10 @@ VM continues running and the error appears in the menu. The old state's `unload`
 callback runs exactly once.
 
 Per-script limits are 64 MiB of Lua heap, 8192 draw commands, 512 UI controls,
-and 8 ms for one Lua callback. Exceeding a limit is reported in the Lua API tab.
+256 event handlers and 8 ms for one Lua callback. Texts are cut to 1024 bytes,
+control labels to 128 and control values to 4096; a select has up to 64 options.
+A value passed to `config` or `storage` may hold up to 65536 elements and 1 MiB of
+text. Exceeding a limit is reported in the Lua API tab.
 
 Game frames are published at up to 60 Hz. Config snapshots update at up to 10 Hz
 or immediately after a patch, but only after the active script uses

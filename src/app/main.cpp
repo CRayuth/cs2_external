@@ -187,6 +187,9 @@ int run(int argc, char** argv)
 
 int main(int argc, char** argv)
 {
+    // DLLs load from System32 only, never from the folder vesta.exe was started from: a downloaded executable often
+    // sits next to files nobody checked. The imports resolved before main are covered by /DEPENDENTLOADFLAG.
+    ::SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32);
     auto& journal = diagnostics::process_journal();
     if (!journal.start())
         diagnostics::process_log().warning("[startup] the journal cannot write its files; events are not recorded");

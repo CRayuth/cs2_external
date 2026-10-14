@@ -1,5 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
-project(vesta VERSION 1.2.0 LANGUAGES C CXX)
+project(vesta VERSION 1.2.1 LANGUAGES C CXX)
+
+# Lua (compiled as C) reports errors with longjmp through Vesta's C++ API functions. With /EHsc MSVC assumes that
+# extern "C" functions never throw and skips the destructors of those frames, leaving locks held and memory leaked;
+# /EHs keeps the unwind information so the longjmp destroys them like an exception would.
+if(MSVC)
+    string(REPLACE "/EHsc" "/EHs" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+endif()
 
 # Dear ImGui, unmodified upstream v1.92.3, fetched at configure time into the dependency cache (build/_deps), not
 # kept in the source tree. The tag is only a convenient name: the commit it resolves to is verified below.
@@ -310,6 +317,8 @@ if(MSVC)
     )
     target_link_options(${PROJECT_NAME} PRIVATE
         "/MANIFESTUAC:level='${VESTA_MANIFEST_LEVEL}' uiAccess='${VESTA_MANIFEST_UIACCESS}'"
+        # Imported DLLs are looked up in System32 only (LOAD_LIBRARY_SEARCH_SYSTEM32), not next to the executable.
+        /DEPENDENTLOADFLAG:0x800
         $<$<CONFIG:Debug>:/DEBUG>
         $<$<CONFIG:Release>:/LTCG;/OPT:REF;/OPT:ICF;/DEBUG:FULL>
         $<$<CONFIG:Release>:/SUBSYSTEM:WINDOWS>

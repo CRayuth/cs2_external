@@ -18,6 +18,7 @@
 
 #include <game/state/level.hpp>
 #include <game/input/bindings.hpp>
+#include <config/hotkeys.hpp>
 #include <features/visuals/visuals.hpp>
 #include <simulation/grenade.hpp>
 #include <nlohmann/json.hpp>
@@ -46,6 +47,14 @@ namespace
 constexpr std::size_t k_memory_limit = 64u * 1024u * 1024u;
 constexpr std::size_t k_draw_limit = 8192;
 constexpr std::size_t k_ui_limit = 512;
+constexpr std::size_t k_max_pending_config_patches = 1024;
+constexpr std::size_t k_max_storage_keys = 1024;
+constexpr std::size_t k_max_storage_bytes = 1u << 20;
+constexpr std::size_t k_max_callbacks = 256;
+constexpr std::size_t k_max_text_bytes = 1024;
+constexpr std::size_t k_max_label_bytes = 128;
+constexpr std::size_t k_max_value_bytes = 4096;
+constexpr std::size_t k_max_select_options = 64;
 constexpr auto k_tick_period = std::chrono::milliseconds(16);
 constexpr auto k_reload_probe_period = std::chrono::milliseconds(250);
 constexpr std::uintmax_t k_max_import_bytes = 8u * 1024u * 1024u;
@@ -113,6 +122,66 @@ std::string sanitize_id(std::string value)
     if (value.empty())
         value = "script";
     return value;
+}
+
+// Keys a script may press: the ones a game is played with. Refused: Windows, Alt and Escape (they reach the shell and
+// other programs), Enter (it sends chat and console lines), the console key, application, browser and media keys,
+// and Vesta's own menu and exit keys.
+[[nodiscard]] bool script_key_allowed(const std::uint16_t key) noexcept
+{
+    if (config::is_lifecycle_key(key))
+        return false;
+    if ((key >= '0' && key <= '9') || (key >= 'A' && key <= 'Z') || (key >= VK_F1 && key <= VK_F12) ||
+        (key >= VK_NUMPAD0 && key <= VK_DIVIDE))
+        return true;
+    switch (key)
+    {
+        case VK_SPACE:
+        case VK_TAB:
+        case VK_SHIFT:
+        case VK_LSHIFT:
+        case VK_RSHIFT:
+        case VK_CONTROL:
+        case VK_LCONTROL:
+        case VK_RCONTROL:
+        case VK_LEFT:
+        case VK_RIGHT:
+        case VK_UP:
+        case VK_DOWN:
+        case VK_OEM_1:
+        case VK_OEM_PLUS:
+        case VK_OEM_COMMA:
+        case VK_OEM_MINUS:
+        case VK_OEM_PERIOD:
+        case VK_OEM_2:
+        case VK_OEM_4:
+        case VK_OEM_5:
+        case VK_OEM_6:
+        case VK_OEM_7:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// The CS2 window when it is in the foreground right now. Checked at the moment input is sent, not taken from the last
+// published frame: input sent after the focus moved would land in another program.
+[[nodiscard]] HWND game_foreground_window() noexcept
+{
+    const auto game_process = game::bound_memory().process.process_id();
+    const auto foreground = ::GetForegroundWindow();
+    const auto root = foreground ? ::GetAncestor(foreground, GA_ROOT) : nullptr;
+    DWORD owner{};
+    if (root)
+        ::GetWindowThreadProcessId(root, &owner);
+    return game_process != 0 && owner == game_process ? root : nullptr;
+}
+
+[[nodiscard]] bool cursor_inside(const HWND window) noexcept
+{
+    POINT cursor{};
+    RECT bounds{};
+    return ::GetCursorPos(&cursor) && ::GetWindowRect(window, &bounds) && ::PtInRect(&bounds, cursor);
 }
 
 void push_vec3(lua_State* state, const foundation::vec3& value)
@@ -195,9 +264,27 @@ void push_json(lua_State* state, const json& value, int depth = 0)
     }
 }
 
-bool lua_to_json(lua_State* state, const int index, json& out, const int depth = 0)
+// A Lua value converted to JSON lives on the C++ heap, outside the script's Lua memory limit, so the conversion has
+// its own budget. It also bounds the walk: a table that refers to itself several times would otherwise be expanded
+// exponentially up to the depth limit.
+struct json_budget
 {
-    if (depth > 32)
+    std::size_t nodes{65536};
+    std::size_t bytes{1u << 20};
+
+    [[nodiscard]] bool take(const std::size_t text_bytes) noexcept
+    {
+        if (nodes == 0 || text_bytes > bytes)
+            return false;
+        --nodes;
+        bytes -= text_bytes;
+        return true;
+    }
+};
+
+bool lua_to_json(lua_State* state, const int index, json& out, json_budget& budget, const int depth = 0)
+{
+    if (depth > 32 || !budget.take(0))
         return false;
     const auto absolute = lua_absindex(state, index);
     switch (lua_type(state, absolute))
@@ -218,6 +305,8 @@ bool lua_to_json(lua_State* state, const int index, json& out, const int depth =
         {
             size_t length{};
             const auto* text = lua_tolstring(state, absolute, &length);
+            if (!budget.take(length))
+                return false;
             out = std::string(text, length);
             return true;
         }
@@ -226,12 +315,14 @@ bool lua_to_json(lua_State* state, const int index, json& out, const int depth =
             const auto length = lua_rawlen(state, absolute);
             if (length > 0)
             {
+                if (length > budget.nodes)
+                    return false;
                 out = json::array();
                 for (std::size_t i = 1; i <= length; ++i)
                 {
                     lua_rawgeti(state, absolute, static_cast<lua_Integer>(i));
                     json child{};
-                    const auto ok = lua_to_json(state, -1, child, depth + 1);
+                    const auto ok = lua_to_json(state, -1, child, budget, depth + 1);
                     lua_pop(state, 1);
                     if (!ok)
                         return false;
@@ -243,15 +334,17 @@ bool lua_to_json(lua_State* state, const int index, json& out, const int depth =
             lua_pushnil(state);
             while (lua_next(state, absolute) != 0)
             {
-                if (!lua_isstring(state, -2))
+                // Only real string keys: lua_tolstring would turn a number key into a string in place and break
+                // lua_next.
+                size_t key_length{};
+                if (lua_type(state, -2) != LUA_TSTRING)
                 {
                     lua_pop(state, 2);
                     return false;
                 }
-                size_t key_length{};
                 const auto* key = lua_tolstring(state, -2, &key_length);
                 json child{};
-                if (!lua_to_json(state, -1, child, depth + 1))
+                if (!budget.take(key_length) || !lua_to_json(state, -1, child, budget, depth + 1))
                 {
                     lua_pop(state, 2);
                     return false;
@@ -519,10 +612,14 @@ struct runtime_t::implementation
 
     void load_runtime_state();
     void save_runtime_state() const;
-    void queue_config(std::string path, json value)
+    // False when too many patches are already waiting; they are applied on the render thread a few times a second.
+    [[nodiscard]] bool queue_config(std::string path, json value)
     {
         std::scoped_lock lock(config_mutex);
+        if (config_patches.size() >= k_max_pending_config_patches)
+            return false;
         config_patches.push_back({std::move(path), std::move(value)});
+        return true;
     }
 
     struct script_instance : std::enable_shared_from_this<script_instance>
@@ -664,6 +761,7 @@ struct runtime_t::implementation
         static int api_draw_panel(lua_State* state);
         static int api_input_is_down(lua_State* state);
         static int api_input_binding(lua_State* state);
+        [[nodiscard]] bool input_allowed() const;
         static int api_input_key(lua_State* state);
         static int api_input_tap(lua_State* state);
         static int api_input_mouse_move(lua_State* state);
@@ -1907,8 +2005,9 @@ void runtime_t::implementation::script_instance::register_api()
 int runtime_t::implementation::script_instance::api_log(lua_State* state)
 {
     auto* script = self(state);
-    const auto text = luaL_checkstring(state, 1);
-    game::bound_memory().log.info("[lua:{}] {}", script->id, text);
+    size_t length{};
+    const auto* text = luaL_checklstring(state, 1, &length);
+    game::bound_memory().log.info("[lua:{}] {}", script->id, std::string_view(text, std::min(length, k_max_text_bytes)));
     return 0;
 }
 
@@ -1939,6 +2038,11 @@ int runtime_t::implementation::script_instance::api_events_on(lua_State* state)
     if (std::ranges::contains(frame_events, event_name))
         script->frame_events_requested = true;
     luaL_checktype(state, 2, LUA_TFUNCTION);
+    std::size_t registered{};
+    for (const auto& [name, entries] : script->callbacks)
+        registered += entries.size();
+    if (registered >= k_max_callbacks || event_name.size() > k_max_label_bytes)
+        return luaL_error(state, "too many event handlers");
     lua_pushvalue(state, 2);
     const auto reference = luaL_ref(state, LUA_REGISTRYINDEX);
     const auto token = script->next_callback_token++;
@@ -2119,7 +2223,8 @@ int runtime_t::implementation::script_instance::api_radar_overview(lua_State* st
 {
     auto* script = self(state);
     const auto map_name = sanitize_id(luaL_checkstring(state, 1));
-    const auto output_stem = sanitize_id(luaL_optstring(state, 2, "overview"));
+    // One file name per map: a free-form name would let a script fill the disk with copies.
+    const auto output_stem = "overview-" + map_name;
     const auto directory = script->owner.data_root / std::filesystem::path(wide_utf8(script->id));
     const auto value = radar_asset::export_overview(map_name, directory, output_stem);
     if (!value.valid)
@@ -2247,12 +2352,12 @@ int runtime_t::implementation::script_instance::api_config_set(lua_State* state)
     }
     const auto path = luaL_checkstring(state, 1);
     json value{};
-    if (!lua_to_json(state, 2, value))
+    json_budget budget{};
+    if (!lua_to_json(state, 2, value, budget) || !script->owner.queue_config(path, std::move(value)))
     {
         lua_pushboolean(state, false);
         return 1;
     }
-    script->owner.queue_config(path, std::move(value));
     lua_pushboolean(state, true);
     return 1;
 }
@@ -2271,20 +2376,20 @@ int runtime_t::implementation::script_instance::api_config_patch(lua_State* stat
     lua_pushnil(state);
     while (lua_next(state, table) != 0)
     {
-        if (!lua_isstring(state, -2))
+        if (lua_type(state, -2) != LUA_TSTRING)
         {
             lua_pop(state, 2);
             lua_pushboolean(state, false);
             return 1;
         }
         json value{};
-        if (!lua_to_json(state, -1, value))
+        json_budget budget{};
+        if (!lua_to_json(state, -1, value, budget) || !script->owner.queue_config(lua_tostring(state, -2), std::move(value)))
         {
             lua_pop(state, 2);
             lua_pushboolean(state, false);
             return 1;
         }
-        script->owner.queue_config(lua_tostring(state, -2), std::move(value));
         lua_pop(state, 1);
     }
     lua_pushboolean(state, true);
@@ -2321,9 +2426,12 @@ int runtime_t::implementation::script_instance::api_storage_get(lua_State* state
     const auto key = luaL_checkstring(state, 1);
     const auto found = script->storage.find(key);
     if (found == script->storage.end())
+    {
         lua_pushnil(state);
-    else
-        push_json(state, *found);
+        return 1;
+    }
+    const json value = *found;
+    push_json(state, value);
     return 1;
 }
 
@@ -2332,12 +2440,20 @@ int runtime_t::implementation::script_instance::api_storage_set(lua_State* state
     auto* script = self(state);
     const auto key = luaL_checkstring(state, 1);
     json value{};
-    if (!lua_to_json(state, 2, value))
+    json_budget budget{};
+    if (!lua_to_json(state, 2, value, budget))
     {
         lua_pushboolean(state, false);
         return 1;
     }
-    script->storage[key] = std::move(value);
+    json next = script->storage;
+    next[key] = std::move(value);
+    if (next.size() > k_max_storage_keys || next.dump().size() > k_max_storage_bytes)
+    {
+        lua_pushboolean(state, false);
+        return 1;
+    }
+    script->storage = std::move(next);
     script->save_storage();
     lua_pushboolean(state, true);
     return 1;
@@ -2496,17 +2612,38 @@ runtime_t::implementation::script_instance* add_or_find_control(lua_State* state
                                                                 std::vector<std::string> options = {})
 {
     auto* script = runtime_t::implementation::script_instance::self(state);
-    const std::string id = luaL_checkstring(state, 1);
-    const std::string label = luaL_optstring(state, 2, id.c_str());
-    std::scoped_lock lock(script->controls_mutex);
-    const auto found = std::ranges::find(script->controls, id, &ui_control::id);
-    if (found == script->controls.end())
+    size_t id_length{};
+    const auto* id = luaL_checklstring(state, 1, &id_length);
+    size_t label_length = id_length;
+    const auto* label = lua_isnoneornil(state, 2) ? id : luaL_checklstring(state, 2, &label_length);
+    if (id_length > k_max_label_bytes)
+        luaL_error(state, "UI control id is too long");
+    // The lock is never held across a Lua call that can raise an error.
+    bool limit_reached{};
     {
-        if (script->controls.size() >= k_ui_limit)
-            luaL_error(state, "UI control limit exceeded");
-        script->controls.push_back({id, label, kind, initial, {}, minimum, maximum, step, std::move(options), 0});
+        std::scoped_lock lock(script->controls_mutex);
+        const auto found = std::ranges::find(script->controls, std::string_view{id, id_length}, &ui_control::id);
+        if (found == script->controls.end())
+        {
+            if (script->controls.size() >= k_ui_limit)
+                limit_reached = true;
+            else
+                script->controls.push_back({std::string(id, id_length),
+                                            std::string(label, std::min(label_length, k_max_label_bytes)), kind,
+                                            initial, {}, minimum, maximum, step, std::move(options), 0});
+        }
     }
+    if (limit_reached)
+        luaL_error(state, "UI control limit exceeded");
     return script;
+}
+
+// Copy of the optional string argument at `index`, cut to `limit` bytes.
+std::string bounded_string(lua_State* state, const int index, const char* fallback, const std::size_t limit)
+{
+    size_t length{};
+    const auto* text = luaL_optlstring(state, index, fallback, &length);
+    return std::string(text, std::min(length, limit));
 }
 
 runtime_t::implementation::draw_command& add_draw(lua_State* state, const runtime_t::implementation::draw_kind kind)
@@ -2524,25 +2661,25 @@ runtime_t::implementation::draw_command& add_draw(lua_State* state, const runtim
 
 int runtime_t::implementation::script_instance::api_ui_text(lua_State* state)
 {
-    auto* script = add_or_find_control(state, control_kind::text, std::string(luaL_optstring(state, 3, "")));
-    const std::string id = luaL_checkstring(state, 1);
-    const std::string value = luaL_optstring(state, 3, "");
+    auto value = bounded_string(state, 3, "", k_max_value_bytes);
+    auto* script = add_or_find_control(state, control_kind::text, value);
+    const std::string_view id = lua_tostring(state, 1);
     std::scoped_lock lock(script->controls_mutex);
     const auto found = std::ranges::find(script->controls, id, &ui_control::id);
     if (found != script->controls.end())
-        found->value = value;
+        found->value = std::move(value);
     return 0;
 }
 
 int runtime_t::implementation::script_instance::api_ui_button(lua_State* state)
 {
+    auto action = bounded_string(state, 3, "Run", k_max_label_bytes);
     auto* script = add_or_find_control(state, control_kind::button, false);
-    const std::string id = luaL_checkstring(state, 1);
-    const std::string action = luaL_optstring(state, 3, "Run");
+    const std::string_view id = lua_tostring(state, 1);
     std::scoped_lock lock(script->controls_mutex);
     const auto found = std::ranges::find(script->controls, id, &ui_control::id);
     if (found != script->controls.end())
-        found->action_text = action;
+        found->action_text = std::move(action);
     return 0;
 }
 
@@ -2566,12 +2703,14 @@ int runtime_t::implementation::script_instance::api_ui_select(lua_State* state)
 {
     luaL_checktype(state, 3, LUA_TTABLE);
     std::vector<std::string> options{};
-    const auto count = lua_rawlen(state, 3);
+    const auto count = std::min<std::size_t>(lua_rawlen(state, 3), k_max_select_options);
     options.reserve(count);
     for (std::size_t i = 1; i <= count; ++i)
     {
         lua_rawgeti(state, 3, static_cast<lua_Integer>(i));
-        options.emplace_back(luaL_checkstring(state, -1));
+        size_t length{};
+        const auto* option = luaL_checklstring(state, -1, &length);
+        options.emplace_back(option, std::min(length, k_max_label_bytes));
         lua_pop(state, 1);
     }
     add_or_find_control(state, control_kind::select, static_cast<int>(luaL_optinteger(state, 4, 0)), 0.0,
@@ -2581,7 +2720,7 @@ int runtime_t::implementation::script_instance::api_ui_select(lua_State* state)
 
 int runtime_t::implementation::script_instance::api_ui_input(lua_State* state)
 {
-    add_or_find_control(state, control_kind::input, std::string(luaL_optstring(state, 3, "")));
+    add_or_find_control(state, control_kind::input, bounded_string(state, 3, "", k_max_value_bytes));
     return 0;
 }
 
@@ -2607,13 +2746,18 @@ int runtime_t::implementation::script_instance::api_ui_separator(lua_State* stat
 int runtime_t::implementation::script_instance::api_ui_get(lua_State* state)
 {
     auto* script = self(state);
-    const std::string id = luaL_checkstring(state, 1);
-    std::scoped_lock lock(script->controls_mutex);
-    const auto found = std::ranges::find(script->controls, id, &ui_control::id);
-    if (found == script->controls.end())
-        lua_pushnil(state);
+    const std::string_view id = luaL_checkstring(state, 1);
+    std::optional<control_value> value{};
+    {
+        std::scoped_lock lock(script->controls_mutex);
+        const auto found = std::ranges::find(script->controls, id, &ui_control::id);
+        if (found != script->controls.end())
+            value = found->value;
+    }
+    if (value)
+        push_control_value(state, *value);
     else
-        push_control_value(state, found->value);
+        lua_pushnil(state);
     return 1;
 }
 
@@ -2621,11 +2765,15 @@ int runtime_t::implementation::script_instance::api_ui_consume(lua_State* state)
 {
     auto* script = self(state);
     const std::string id = luaL_checkstring(state, 1);
-    std::scoped_lock lock(script->controls_mutex);
-    auto& presses = script->button_presses[id];
-    const auto result = presses > 0;
-    if (result)
-        --presses;
+    bool result{};
+    {
+        std::scoped_lock lock(script->controls_mutex);
+        if (const auto found = script->button_presses.find(id); found != script->button_presses.end() && found->second > 0)
+        {
+            --found->second;
+            result = true;
+        }
+    }
     lua_pushboolean(state, result);
     return 1;
 }
@@ -2686,7 +2834,7 @@ int runtime_t::implementation::script_instance::api_draw_text(lua_State* state)
     command.a = {static_cast<float>(luaL_checknumber(state, 1)), static_cast<float>(luaL_checknumber(state, 2)), 0.0f};
     size_t length{};
     const auto* text = luaL_checklstring(state, 3, &length);
-    command.text.assign(text, length);
+    command.text.assign(text, std::min(length, k_max_text_bytes));
     command.color = read_color(state, 4);
     return 0;
 }
@@ -2707,7 +2855,7 @@ int runtime_t::implementation::script_instance::api_draw_world_text(lua_State* s
     command.a = read_vec3(state, 1);
     size_t length{};
     const auto* text = luaL_checklstring(state, 2, &length);
-    command.text.assign(text, length);
+    command.text.assign(text, std::min(length, k_max_text_bytes));
     command.color = read_color(state, 3);
     return 0;
 }
@@ -2794,7 +2942,7 @@ int runtime_t::implementation::script_instance::api_draw_panel(lua_State* state)
     command.height = std::max(36.0f, static_cast<float>(luaL_checknumber(state, 4)));
     size_t length{};
     const auto* title = luaL_checklstring(state, 5, &length);
-    command.text.assign(title, length);
+    command.text.assign(title, std::min(length, k_max_label_bytes));
     command.color = read_color(state, 6);
     return 0;
 }
@@ -2802,7 +2950,8 @@ int runtime_t::implementation::script_instance::api_draw_panel(lua_State* state)
 int runtime_t::implementation::script_instance::api_input_is_down(lua_State* state)
 {
     const auto key = static_cast<int>(luaL_checkinteger(state, 1));
-    lua_pushboolean(state, key > 0 && key < 256 && (::GetAsyncKeyState(key) & 0x8000) != 0);
+    lua_pushboolean(state, key > 0 && key < 256 && game_foreground_window() &&
+                               (::GetAsyncKeyState(key) & 0x8000) != 0);
     return 1;
 }
 
@@ -2831,18 +2980,25 @@ int runtime_t::implementation::script_instance::api_input_binding(lua_State* sta
     return 1;
 }
 
+// Script input reaches only CS2: the menu is closed, the game takes input, no chat line is being typed and the game
+// window is in the foreground at this moment.
+bool runtime_t::implementation::script_instance::input_allowed() const
+{
+    if (provisional)
+        return false;
+    const auto frame = owner.current_frame.load(std::memory_order_acquire);
+    return frame && !frame->menu_open && frame->input_ready && game_foreground_window() &&
+           !game::input_bindings().text_entry_active();
+}
+
 int runtime_t::implementation::script_instance::api_input_key(lua_State* state)
 {
     auto* script = self(state);
-    if (script->provisional)
-    {
-        lua_pushboolean(state, false);
-        return 1;
-    }
     const auto key = static_cast<std::uint16_t>(std::clamp<lua_Integer>(luaL_checkinteger(state, 1), 1, 255));
     const auto pressed = lua_toboolean(state, 2) != 0;
-    const auto frame = script->owner.current_frame.load(std::memory_order_acquire);
-    if (pressed && (!frame || frame->menu_open || !frame->input_ready))
+    // Releasing a key the script holds is always allowed; anything else needs a game key and the game in focus.
+    const auto releasing_held = !pressed && script->held_keys.contains(key);
+    if (script->provisional || (!releasing_held && (!script_key_allowed(key) || !script->input_allowed())))
     {
         lua_pushboolean(state, false);
         return 1;
@@ -2862,14 +3018,8 @@ int runtime_t::implementation::script_instance::api_input_key(lua_State* state)
 int runtime_t::implementation::script_instance::api_input_tap(lua_State* state)
 {
     auto* script = self(state);
-    if (script->provisional)
-    {
-        lua_pushboolean(state, false);
-        return 1;
-    }
     const auto key = static_cast<std::uint16_t>(std::clamp<lua_Integer>(luaL_checkinteger(state, 1), 1, 255));
-    const auto frame = script->owner.current_frame.load(std::memory_order_acquire);
-    if (!frame || frame->menu_open || !frame->input_ready)
+    if (!script_key_allowed(key) || !script->input_allowed())
     {
         lua_pushboolean(state, false);
         return 1;
@@ -2882,19 +3032,13 @@ int runtime_t::implementation::script_instance::api_input_tap(lua_State* state)
 int runtime_t::implementation::script_instance::api_input_mouse_move(lua_State* state)
 {
     auto* script = self(state);
-    if (script->provisional)
+    const auto dx = static_cast<int>(std::clamp<lua_Integer>(luaL_checkinteger(state, 1), -4096, 4096));
+    const auto dy = static_cast<int>(std::clamp<lua_Integer>(luaL_checkinteger(state, 2), -4096, 4096));
+    if (!script->input_allowed())
     {
         lua_pushboolean(state, false);
         return 1;
     }
-    const auto frame = script->owner.current_frame.load(std::memory_order_acquire);
-    if (!frame || frame->menu_open || !frame->input_ready)
-    {
-        lua_pushboolean(state, false);
-        return 1;
-    }
-    const auto dx = static_cast<int>(luaL_checkinteger(state, 1));
-    const auto dy = static_cast<int>(luaL_checkinteger(state, 2));
     lua_pushboolean(state,
                     platform::windows::bound_input().pointer(dx, dy, platform::windows::pointer_action::relative_move));
     return 1;
@@ -2903,15 +3047,12 @@ int runtime_t::implementation::script_instance::api_input_mouse_move(lua_State* 
 int runtime_t::implementation::script_instance::api_input_mouse_button(lua_State* state)
 {
     auto* script = self(state);
-    if (script->provisional)
-    {
-        lua_pushboolean(state, false);
-        return 1;
-    }
     const auto button = std::string_view(luaL_checkstring(state, 1));
     const auto pressed = lua_toboolean(state, 2) != 0;
-    const auto frame = script->owner.current_frame.load(std::memory_order_acquire);
-    if (pressed && (!frame || frame->menu_open || !frame->input_ready))
+    // A click needs the pointer over the game window too: a click elsewhere would hand the focus to another program.
+    const auto window = game_foreground_window();
+    if (script->provisional ||
+        (pressed && (!script->input_allowed() || !window || !cursor_inside(window))))
     {
         lua_pushboolean(state, false);
         return 1;
@@ -3157,9 +3298,16 @@ void runtime_t::refresh()
                 stream >> manifest;
                 const auto folder = path_utf8(item.path().filename());
                 const auto id = sanitize_id(manifest.value("id", folder));
+                const auto entry_name = std::filesystem::u8path(manifest.value("entry", std::string("main.lua")));
                 const auto entry = platform::windows::data_storage::extended_path(
-                    item.path() / std::filesystem::u8path(manifest.value("entry", std::string("main.lua"))));
-                if (!std::filesystem::is_regular_file(entry))
+                    std::filesystem::weakly_canonical(item.path() / entry_name));
+                const auto package_root =
+                    platform::windows::data_storage::extended_path(std::filesystem::weakly_canonical(item.path()));
+                // The entry file stays inside its package: no absolute path, no way out through "..".
+                const auto inside = std::filesystem::relative(entry, package_root);
+                if (entry_name.is_absolute() || entry_name.has_root_name() || inside.empty() ||
+                    inside.native().starts_with(L"..") || _wcsicmp(entry.extension().c_str(), L".lua") != 0 ||
+                    !std::filesystem::is_regular_file(entry))
                     continue;
                 found.push_back({id, manifest.value("name", id), manifest.value("version", std::string("1.0")),
                                  manifest.value("author", std::string{}), manifest.value("description", std::string{}),

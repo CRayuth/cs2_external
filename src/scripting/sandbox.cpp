@@ -144,6 +144,24 @@ int text_only_load(lua_State* state)
     return lua_gettop(state);
 }
 
+// setmetatable without finalizers: a __gc metamethod would run Lua code inside any Vesta API call that allocates,
+// re-entering the runtime while it is in the middle of that call.
+int setmetatable_without_finalizers(lua_State* state)
+{
+    if (lua_type(state, 2) == LUA_TTABLE)
+    {
+        lua_pushliteral(state, "__gc");
+        const auto finalizer = lua_rawget(state, 2);
+        lua_pop(state, 1);
+        if (finalizer != LUA_TNIL)
+            return luaL_error(state, "finalizers (__gc) are not available to scripts");
+    }
+    lua_pushvalue(state, lua_upvalueindex(1));
+    lua_insert(state, 1);
+    lua_call(state, lua_gettop(state) - 1, LUA_MULTRET);
+    return lua_gettop(state);
+}
+
 void open_library(lua_State* state, const char* name, const lua_CFunction open)
 {
     luaL_requiref(state, name, open, 1);
@@ -190,6 +208,9 @@ void open_restricted(lua_State* state, const std::filesystem::path& script_folde
     lua_getglobal(state, "load");
     lua_pushcclosure(state, text_only_load, 1);
     lua_setglobal(state, "load");
+    lua_getglobal(state, "setmetatable");
+    lua_pushcclosure(state, setmetatable_without_finalizers, 1);
+    lua_setglobal(state, "setmetatable");
 
     // string.dump would hand out bytecode.
     lua_getglobal(state, LUA_STRLIBNAME);

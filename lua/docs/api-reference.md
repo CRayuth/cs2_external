@@ -17,7 +17,7 @@
 - `vesta.game.trace_ray(start, finish)`
 - `vesta.game.bomb_damage(position [, site, eye_angles, ducked])`
 - `vesta.game.predict_grenade(origin, velocity, kind [, remaining_lifetime])`
-- `vesta.game.radar_overview(map_name [, output_stem])`
+- `vesta.game.radar_overview(map_name)`
 - `vesta.game.penetration_damage(start, finish [, target_handle])`
 
 ## Config and storage

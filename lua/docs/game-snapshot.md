@@ -66,7 +66,7 @@ local pen = vesta.game.penetration_damage(eye, point, target.handle)
 урон, hitbox, дистанция и признак пенетрации; без цели функция оценивает первый
 прострел в направлении `finish - start`.
 
-`radar_overview(map_name, output_stem)` один раз извлекает штатный radar overview
-из локального VPK CS2, декодирует его в PNG внутри приватной директории
+`radar_overview(map_name)` один раз извлекает штатный radar overview
+из локального VPK CS2, декодирует его в `overview-<map>-primary.png` (и `-lower.png`) внутри приватной директории
 данных активного скрипта и возвращает `pos_x`, `pos_y`, `scale`, размеры и данные
 нижнего слоя карты. В бинарник Vesta изображения карт не встраиваются.

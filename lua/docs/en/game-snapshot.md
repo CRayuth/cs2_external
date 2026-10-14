@@ -66,7 +66,7 @@ weapon context. With `target_handle` it returns damage, hitbox, distance, and
 penetration state; without a target it evaluates the first penetration along
 `finish - start`.
 
-`radar_overview(map_name, output_stem)` extracts the game's radar overview from
-the local CS2 VPK once, decodes it to PNG inside the active script's private data
-directory, and returns `pos_x`, `pos_y`, `scale`, dimensions, and lower-level map
+`radar_overview(map_name)` extracts the game's radar overview from the local CS2
+VPK once, decodes it to `overview-<map>-primary.png` (and `-lower.png`) inside the
+active script's private data directory, and returns `pos_x`, `pos_y`, `scale`, dimensions, and lower-level map
 data. Map images are not embedded in Vesta.

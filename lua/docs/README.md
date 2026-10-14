@@ -30,6 +30,7 @@ lua/
 - `string` без `dump`, `table`, `math`, `utf8`, `coroutine`;
 - `os` только с `clock`, `time`, `date`, `difftime`;
 - `require` загружает `.lua` только из папки самого скрипта и из общей `lua/modules`;
+- `setmetatable` не принимает финализаторы (`__gc`);
 - нет `io`, `package`, `debug` и `vesta.helpers`.
 
 Данные скрипт хранит через `vesta.storage`. Единственное исключение —

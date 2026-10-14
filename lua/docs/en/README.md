@@ -31,6 +31,7 @@ the standard library:
 - `string` without `dump`, `table`, `math`, `utf8`, `coroutine`;
 - `os` with `clock`, `time`, `date` and `difftime` only;
 - `require` loads `.lua` only from the script's own folder and the shared `lua/modules`;
+- `setmetatable` refuses finalizers (`__gc`);
 - no `io`, `package`, `debug` or `vesta.helpers`.
 
 Scripts keep their data with `vesta.storage`. The one exception is the bundled
