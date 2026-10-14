@@ -1,4 +1,5 @@
-
+-- Vesta Web Radar. vesta.exe remains offline: network access exists only in
+-- this explicitly enabled Lua package and its helper process.
 
 local root = vesta.api.script_dir
 local runtime = vesta.api.data_dir
@@ -31,6 +32,7 @@ local trajectory_cache = {}
 local effect_cache = {}
 local copy_feedback_until = 0
 local copy_action = "Starting..."
+local helper_deadline = nil -- os.clock() by which the helper must have reported its first status
 
 local function write_file(path, value)
     local file = io.open(path, "wb")
@@ -137,7 +139,15 @@ end
 
 local function refresh_status()
     local source = read_file(status_path)
-    if not source then return end
+    if not source then
+        if running and helper_deadline and os.clock() > helper_deadline then
+            running, helper_deadline = false, nil
+            status = "Error: the web radar helper did not start"
+            set_copy_action("Unavailable")
+        end
+        return
+    end
+    helper_deadline = nil
     local phase = json_field(source, "status")
     local public = json_field(source, "public_url")
     local err = json_field(source, "error")
@@ -285,7 +295,8 @@ local function encode_projectiles(frame)
             and (precise_expire - game_time)
             or (effect and math.max(0,
                 duration - (number(frame.timestamp_us) - effect.started) / 1000000) or -1)
-
+        -- HE/flash entities can survive briefly after their one-shot effect. Do not
+        -- leave a stale browser marker during that network cleanup interval.
         if not ((kind == 1 or kind == 2) and p.detonated)
             and not (active_effect and duration > 0 and effect_remaining <= 0) then
             local fires = {}
@@ -347,6 +358,7 @@ local function start_server()
         return
     end
     running, status = true, "Starting local server"
+    helper_deadline = os.clock() + 15
     set_copy_action("Starting...")
 end
 
@@ -372,7 +384,7 @@ vesta.events.on("tick", function(delta)
             if normalize_map(frame.map) ~= map_name then prepare_overview(frame) end
             if number(frame.timestamp_us) >= next_write_us and not prime_one_trajectory(frame) then
                 write_state(encode_frame(frame))
-                next_write_us = number(frame.timestamp_us) + 50000
+                next_write_us = number(frame.timestamp_us) + 50000 -- 20 Hz producer
             end
         end
     end

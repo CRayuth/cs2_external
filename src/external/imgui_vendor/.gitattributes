@@ -1,3 +1,0 @@
-# Preserve the upstream snapshot bytes; lint first-party sources separately.
-* -text -whitespace
-.gitattributes text eol=lf

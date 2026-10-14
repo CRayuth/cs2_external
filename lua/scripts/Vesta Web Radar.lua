@@ -12,6 +12,15 @@ __VESTA_WEB_RADAR_HELPER = [====[param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+# Windows PowerShell's path cmdlets reject extended-length (\\?\) names.
+function ConvertTo-PlainPath([string]$Path) {
+    if ($Path.StartsWith('\\?\UNC\')) { return '\\' + $Path.Substring(8) }
+    if ($Path.StartsWith('\\?\')) { return $Path.Substring(4) }
+    return $Path
+}
+$Root = ConvertTo-PlainPath $Root
+$Runtime = ConvertTo-PlainPath $Runtime
+$HtmlFile = ConvertTo-PlainPath $HtmlFile
 try { [Diagnostics.Process]::GetCurrentProcess().PriorityClass = 'BelowNormal' } catch { }
 if ($Session -notmatch '^[A-Za-z0-9-]{1,96}$') { throw 'invalid session id' }
 $statusFile = Join-Path $Runtime "$Session-status.json"
@@ -1499,6 +1508,7 @@ local trajectory_cache = {}
 local effect_cache = {}
 local copy_feedback_until = 0
 local copy_action = "Starting..."
+local helper_deadline = nil -- os.clock() by which the helper must have reported its first status
 
 local function write_file(path, value)
     local file = io.open(path, "wb")
@@ -1605,7 +1615,15 @@ end
 
 local function refresh_status()
     local source = read_file(status_path)
-    if not source then return end
+    if not source then
+        if running and helper_deadline and os.clock() > helper_deadline then
+            running, helper_deadline = false, nil
+            status = "Error: the web radar helper did not start"
+            set_copy_action("Unavailable")
+        end
+        return
+    end
+    helper_deadline = nil
     local phase = json_field(source, "status")
     local public = json_field(source, "public_url")
     local err = json_field(source, "error")
@@ -1816,6 +1834,7 @@ local function start_server()
         return
     end
     running, status = true, "Starting local server"
+    helper_deadline = os.clock() + 15
     set_copy_action("Starting...")
 end
 

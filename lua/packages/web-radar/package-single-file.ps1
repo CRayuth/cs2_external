@@ -19,6 +19,8 @@ $helper = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'helper.ps1'))
 $html = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'public\index.html'))
 $main = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'main.lua'))
 $content = @(
+	'-- Vesta Web Radar single-file distribution. Generated; edit vesta_web_radar sources.'
+	'-- Copy only this file into %TEMP%\vesta\lua\scripts, refresh, then enable it.'
     ('__VESTA_WEB_RADAR_HELPER = ' + (ConvertTo-LuaLongString $helper))
     ('__VESTA_WEB_RADAR_HTML = ' + (ConvertTo-LuaLongString $html))
     $main

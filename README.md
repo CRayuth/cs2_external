@@ -26,14 +26,16 @@ sandboxed Lua API. The native client stays external: no injection and no driver.
 4. Press `Insert` to open the menu. Press `End` to close Vesta.
 
 That is all you need. Profiles are managed from **Misc → Configs**. On a compact
-keyboard, change the menu and exit keys in `%TEMP%\vesta\hotkeys.cfg`, then
+keyboard, change the menu and exit keys in `%TEMP%\vesta\configs\hotkeys.cfg`, then
 restart Vesta.
 
 ## Important
 
 > [!CAUTION]
-> **Lua scripts.** Never run an unreviewed Lua script: it may be harmful. Vetted,
-> popular scripts will be published in this repository and on the Vesta website.
+> **Lua scripts.** Scripts run in a sandbox without file, process or network
+> access; only the bundled Vesta Web Radar, verified by its SHA-256, runs outside
+> it. A script can still change your settings and press keys, so run only scripts
+> you trust. Vetted scripts are published in this repository and on the Vesta website.
 
 > [!TIP]
 > **Performance.** An external overlay shares CPU and GPU resources with the
@@ -175,10 +177,12 @@ and Git, then run:
 ```powershell
 cmake --preset release
 cmake --build --preset release --parallel
-ctest --test-dir build/release -C Release --output-on-failure
 ```
 
-The executable is written to `build/bin/vesta.exe`. CMake downloads the pinned third-party dependencies during the first configure.
+The executable is written to `build/bin/vesta.exe`. CMake downloads the pinned
+third-party dependencies (Dear ImGui, Lua, FreeType, meshoptimizer, LZ4, Zstandard,
+nlohmann/json) unmodified during the first configure; the repository vendors none
+of them.
 
 </details>
 

@@ -1,5 +1,8 @@
 #pragma once
 
+// Precompiled header: the Windows SDK and the standard library only. Project headers are included by the files
+// that use them, so each file states its real dependencies.
+
 // windows
 #include <windows.h>
 #include <tlhelp32.h>
@@ -44,31 +47,3 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
-
-// external
-#include <external/xorstr.hpp>
-
-// shared project primitives
-#include <core/math/interpolation.hpp>
-#include <core/math/vector.hpp>
-#include <core/memory/addresses.hpp>
-#include <system/storage.hpp>
-#include <system/frame_limiter.hpp>
-#include <core/state/constants.hpp>
-#include <core/memory/symbol.hpp>
-#include <core/math/random.hpp>
-
-// platform
-#include <core/memory/process.hpp>
-#include <core/memory/modules.hpp>
-#include <core/input/input.hpp>
-#include <system/diagnostics.hpp>
-#include <system/performance.hpp>
-
-#include <render/draw.hpp>
-#include <config/settings.hpp>
-#include <core/state/services.hpp>
-#include <app/context.hpp>
-
-// Project state layouts are consumed transitively by the precompiled header.
-// Keep the PCH dependency stamp explicit when snapshot layouts evolve.

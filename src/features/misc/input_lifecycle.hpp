@@ -1,9 +1,10 @@
 #pragma once
 
-#include <core/input/bindings.hpp>
+#include <game/input/bindings.hpp>
 #include <span>
 
-namespace features::misc::input_lifecycle {
+namespace features::misc::input_lifecycle
+{
 
 struct owned_control
 {
@@ -38,8 +39,7 @@ template<class Send>
 template<class PhysicalState>
 [[nodiscard]] bool activation_held(const int virtual_key, PhysicalState&& physical_state)
 {
-    return virtual_key > 0 && virtual_key < 256
-        && physical_state(static_cast<std::uint16_t>(virtual_key));
+    return virtual_key > 0 && virtual_key < 256 && physical_state(static_cast<std::uint16_t>(virtual_key));
 }
 
 } // namespace features::misc::input_lifecycle

@@ -1,25 +1,26 @@
 #pragma once
 
+#include <mutex>
 #include <string>
 
-#include <external/json.hpp>
+#include <nlohmann/json.hpp>
 
-namespace config {
+namespace config
+{
 
-	struct configuration_store
-	{
-		static constexpr const char* k_config_ext = ".cfg";
-		static constexpr int k_max_name_len = 64;
+// The live configuration: every change is kept in %TEMP%\vesta\configs\current.cfg. It is not one of the named
+// configs in the library (config/library.hpp); loading a named config copies it into the live one.
+struct configuration_store
+{
+    // Writes only when the configuration differs from what was last written.
+    bool write_cache() const;
+    bool read_cache();
+    [[nodiscard]] std::string cache_path() const;
 
-		char name_buffer[ k_max_name_len ]{ "config" };
-
-		bool write_to( const std::string& path ) const;
-		bool read_from( const std::string& path );
-		bool write_cache( ) const;
-		bool read_cache( );
-		[[nodiscard]] std::string cache_path( ) const;
-
-		void set_active_path( const std::string& full_path );
-	};
+private:
+    // Saves come from the menu, the overlay and shutdown; one at a time touches the cache file.
+    mutable std::mutex m_cache_mutex{};
+    mutable std::string m_last_written{};
+};
 
 } // namespace config

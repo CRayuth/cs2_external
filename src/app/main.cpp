@@ -1,202 +1,233 @@
 #include <stdafx.hpp>
+#include <diagnostics/log.hpp>
+#include <diagnostics/performance.hpp>
+#include <platform/windows/storage.hpp>
+#include <diagnostics/health.hpp>
+#include <config/settings.hpp>
+#include <game/state/services.hpp>
+#include <ui/presentation.hpp>
+#include <simulation/collision.hpp>
+#include <diagnostics/journal.hpp>
+#include <diagnostics/crash_record.hpp>
+#include <cwchar>
 #include <app/context.hpp>
-#include <core/memory/compatibility.hpp>
-#include <app/startup_stage.hpp>
-#include <app/workers.hpp>
-#include <simulation/seed_diagnostics.hpp>
+#include <app/startup_guards.hpp>
+#include <app/startup_failure.hpp>
+#include <config/first_run.hpp>
+#include <config/hotkeys.hpp>
+#include <app/runtime_session.hpp>
+#include <app/diagnostic_reports.hpp>
 #include <simulation/shot_trace.hpp>
-#include <simulation/trace_session.hpp>
-#include <render/overlay/ui.hpp>
+#include <app/trace_session.hpp>
 #include <scripting/runtime.hpp>
-
-namespace features::misc { int auto_accept_report( const char* path ); }
-
-#include <timeapi.h>
-#pragma comment( lib, "winmm.lib" )
 
 namespace
 {
-	struct timer_period_guard
-	{
-		timer_period_guard( ) { timeBeginPeriod( 1 ); }
-		~timer_period_guard( ) { timeEndPeriod( 1 ); }
-	};
-
-	struct single_instance_guard
-	{
-		single_instance_guard( )
-		{
-			handle = CreateMutexW( nullptr, FALSE, L"Local\\vesta.overlay.single-instance" );
-			acquired = handle != nullptr && GetLastError( ) != ERROR_ALREADY_EXISTS;
-		}
-
-		~single_instance_guard( )
-		{
-			if ( handle != nullptr )
-			{
-				CloseHandle( handle );
-			}
-		}
-
-		HANDLE handle{};
-		bool acquired{};
-	};
-
+// Fatal pre-window failure: say what happened and what to do; the journal has the detail.
+int fail_startup(app::startup_failure failure)
+{
+    const auto text = app::describe(failure);
+    std::wstring message{text.what};
+    message += L"\n\n";
+    message += text.action;
+    message += L"\n\nDetails: %TEMP%\\vesta\\logs";
+    ::MessageBoxW(nullptr, message.c_str(), L"Vesta", MB_OK | MB_ICONERROR);
+    return 1;
 }
+
+int run(int argc, char** argv)
+{
+#if defined(VESTA_SHOT_TRACE_ENABLED) && VESTA_SHOT_TRACE_ENABLED
+    if (const auto report = app::run_diagnostic_report(argc, argv))
+        return *report;
+#else
+    static_cast<void>(argc);
+    static_cast<void>(argv);
+#endif
+    // Ordinary user process: no elevation, no token changes, no relaunch.
+    ::SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    diagnostics::emit(diagnostics::event::startup_instance_begin);
+    const app::single_instance_guard instance{};
+    if (instance.state() == app::instance_state::already_running)
+    {
+        diagnostics::emit(diagnostics::event::startup_instance_duplicate);
+        return 0;
+    }
+    if (instance.state() == app::instance_state::failed)
+    {
+        diagnostics::emit(diagnostics::event::startup_instance_failed, diagnostics::severity::error,
+                          diagnostics::code_domain::win32, instance.error());
+        const auto message =
+            std::format(L"Vesta could not initialize its single-instance guard (Win32 {}).", instance.error());
+        ::MessageBoxW(nullptr, message.c_str(), L"Vesta startup", MB_OK | MB_ICONERROR);
+        return 1;
+    }
+
+    {
+        if (!app::context().diagnostics.open(" :> "))
+        {
+            diagnostics::emit(diagnostics::event::startup_console_failed, diagnostics::severity::error);
+            return 1;
+        }
+    }
+
+    diagnostics::emit(diagnostics::event::startup_storage_begin);
+    const auto storage = platform::windows::runtime_storage::initialize();
+    if (!storage)
+    {
+        diagnostics::emit(diagnostics::event::startup_storage_failed, diagnostics::severity::error,
+                          diagnostics::code_domain::system, storage.error);
+        diagnostics::emit(diagnostics::event::startup_storage_stage, diagnostics::severity::error,
+                          diagnostics::code_domain::mode, static_cast<std::uint32_t>(storage.stage));
+        wchar_t message[256]{};
+        std::swprintf(message, std::size(message),
+                      L"Vesta user data initialization failed (stage %u, code %lu). Original files were preserved.",
+                      static_cast<unsigned>(storage.stage), static_cast<unsigned long>(storage.error));
+        ::MessageBoxW(nullptr, message, L"Vesta user data", MB_OK | MB_ICONERROR);
+        return 1;
+    }
+    diagnostics::emit(diagnostics::event::startup_storage_ready);
+    diagnostics::performance::set_output_directory(platform::windows::runtime_storage::paths().research_logs);
+    if (storage.retained)
+        diagnostics::emit(diagnostics::event::startup_storage_retained, diagnostics::severity::warning);
+    const app::timer_period_guard timer_period{};
+    ui::bind_presentation(app::context().overlay, app::context().menu);
+    app::runtime_session session(app::context());
+
+    {
+        diagnostics::emit(diagnostics::event::startup_attach_begin);
+        if (!app::context().process.attach(L"cs2.exe"))
+        {
+            diagnostics::emit(diagnostics::event::startup_attach_failed, diagnostics::severity::error);
+            return fail_startup(app::startup_failure::game_connection);
+        }
+        diagnostics::emit(diagnostics::event::startup_attach_ready);
+
+        diagnostics::emit(diagnostics::event::startup_input_begin);
+        if (!app::context().input.connect())
+        {
+            diagnostics::emit(diagnostics::event::startup_input_failed, diagnostics::severity::error);
+            return fail_startup(app::startup_failure::input_unavailable);
+        }
+        app::context().input.set_protected_keys(&config::is_lifecycle_key);
+        platform::windows::bind_input(app::context().input);
+        diagnostics::emit(diagnostics::event::startup_input_ready);
+    }
+
+    {
+        diagnostics::emit(diagnostics::event::startup_modules_begin);
+        if (!app::context().modules.discover(app::context().process))
+        {
+            diagnostics::emit(diagnostics::event::startup_modules_failed, diagnostics::severity::error);
+            return fail_startup(app::startup_failure::modules_not_found);
+        }
+        diagnostics::emit(diagnostics::event::startup_modules_ready);
+
+        diagnostics::emit(diagnostics::event::startup_addresses_begin);
+        if (!app::context().addresses.initialize(app::context().memory))
+        {
+            diagnostics::emit(diagnostics::event::startup_addresses_failed, diagnostics::severity::error);
+            return fail_startup(app::startup_failure::addresses_failed);
+        }
+        diagnostics::emit(diagnostics::event::startup_addresses_ready);
+
+        diagnostics::emit(diagnostics::event::startup_schema_begin);
+        if (!game::fields().initialize(app::context().memory))
+        {
+            diagnostics::emit(diagnostics::event::startup_schema_failed, diagnostics::severity::error);
+            return fail_startup(app::startup_failure::schema_failed);
+        }
+        diagnostics::emit(diagnostics::event::startup_schema_ready);
+        // Connect the game-memory adapters to the attached process before anything looks anything up.
+        game::bind_memory(app::context().memory, app::context().addresses);
+        game::world().set_line_of_sight(
+            [](const foundation::vec3& from, const foundation::vec3& to)
+            { return simulation::collision().valid() && !simulation::collision().trace_ray(from, to).hit; });
+    }
+
+    {
+        // Start from the curated legit profile, then overlay the user's last live
+        // cache.  Clean installs and missing/new keys therefore inherit legit.cfg.
+        diagnostics::emit(diagnostics::event::startup_config_begin);
+        config::apply_default_config();
+        const bool profile_existed = config::storage.read_cache();
+        if (!profile_existed)
+        {
+            diagnostics::emit(diagnostics::event::startup_cache_unavailable, diagnostics::severity::warning);
+            config::storage.write_cache();
+        }
+        // A fresh installation shows the in-game guide once; a returning user is not greeted again.
+        config::first_run::evaluate(profile_existed, platform::windows::runtime_storage::paths().configs);
+        diagnostics::emit(diagnostics::event::startup_scripting_begin);
+        if (!session.initialize_scripting())
+        {
+            app::context().diagnostics.warning("Lua runtime storage could not be initialized; scripting is disabled.");
+            diagnostics::emit(diagnostics::event::startup_scripting_disabled, diagnostics::severity::warning);
+            diagnostics::health().scripting.publish(1, diagnostics::readiness::state::error,
+                                                    diagnostics::readiness::reason::scripting_storage_failed);
+        }
+
+        else
+        {
+            diagnostics::health().scripting.publish(1, diagnostics::readiness::state::ready);
+            diagnostics::emit(diagnostics::event::startup_scripting_ready);
+        }
+        config::publish_runtime_snapshot();
+        session.initialize_trace();
+
+        diagnostics::emit(diagnostics::event::startup_workers_begin);
+        session.start_workers();
+        diagnostics::emit(diagnostics::event::startup_workers_ready);
+        const auto completed = app::context().overlay.launch(session.quiesce_action());
+        session.quiesce();
+        return completed && !session.failed() ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+}
+} // namespace
 
 int main(int argc, char** argv)
 {
-#if defined(VESTA_SHOT_TRACE_ENABLED) && VESTA_SHOT_TRACE_ENABLED
-    if (argc == 3 && std::string_view(argv[1]) == "--seed-snapshot-report")
-        return simulation::seed_diagnostics::report(argv[2]);
-    if (argc == 3 && std::string_view(argv[1]) == "--compatibility-report")
-        return game::compatibility::report(argv[2]);
-    if (argc == 3 && std::string_view(argv[1]) == "--auto-accept-report")
-        return features::misc::auto_accept_report(argv[2]);
-#endif
-	::SetProcessDpiAwarenessContext( DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 );
-#if (defined(VESTA_WINDOWED_PROFILE) && VESTA_WINDOWED_PROFILE) || (defined(VESTA_WINDOWED_SESSION) && VESTA_WINDOWED_SESSION)
-	constexpr DWORD ui_access_result = ERROR_SUCCESS;
-#elif defined(VESTA_INSTALLED_UIACCESS) && VESTA_INSTALLED_UIACCESS
-	if (!ui_access::enabled())
-	{
-		::MessageBoxW(nullptr,
-		              L"Vesta requires the UIAccess token declared in its manifest. "
-		              L"Install a trusted, signed build in Program Files.",
-		              L"Vesta installation", MB_OK | MB_ICONERROR);
-		return 1;
-	}
-	constexpr DWORD ui_access_result = ERROR_SUCCESS;
-#else
-	// Elevation is a bootstrap stage; no game, window or D3D state exists yet.
-	if (app::select_startup_stage(ui_access::elevated(), ui_access::enabled()) ==
-	    app::startup_stage::request_elevation)
-		return ui_access::elevate() == ERROR_SUCCESS ? 0 : 1;
-	const DWORD ui_access_result = ui_access::prepare( );
-#endif
-	const single_instance_guard instance{};
-	if ( !instance.acquired )
-	{
-		return 0;
-	}
-
-	{
-		if ( !app::context().diagnostics.open( " :> " ) )
-		{
-			return 1;
-		}
-
-		if ( ui_access_result != ERROR_SUCCESS )
-		{
-			const auto message = std::format(
-                L"UIAccess initialization failed (Win32 {}). Vesta requires UIAccess for presentation.",
-                ui_access_result );
-            ::MessageBoxW(nullptr, message.c_str(), L"Vesta startup", MB_OK | MB_ICONERROR);
-            return 1;
-		}
-	}
-
-	const timer_period_guard timer_period{};
-
-	{
-
-		if ( !app::context().process.attach( L"cs2.exe" ) )
-		{
-			return 1;
-		}
-
-		if ( !app::context().input.connect( ) )
-		{
-			return 1;
-		}
-	}
-
-	{
-		if ( !app::context().modules.discover( app::context().process ) )
-		{
-			return 1;
-		}
-
-		if ( !app::context().addresses.initialize( ) )
-		{
-			return 1;
-		}
-
-		if ( !game::fields( ).initialize( ) )
-		{
-			return 1;
-		}
-	}
-
-	{
-		// Start from the curated legit profile, then overlay the user's last live
-		// cache.  Clean installs and missing/new keys therefore inherit legit.cfg.
-		config::apply_default_config( );
-		if ( !config::storage.read_cache( ) )
-		{
-			config::storage.write_cache( );
-		}
-		if ( !scripting::runtime().initialize( ) )
-		{
-			app::context().diagnostics.warning(
-				"Lua runtime storage could not be initialized; scripting is disabled." );
-			config::general_settings.lua_enabled = false;
-		}
-
-		config::publish_runtime_snapshot();
-        simulation::trace_session::initialize();
-
-		const auto game_process = static_cast<HANDLE>(
-			app::context().process.native_handle( ) );
-		std::thread( [game_process]
-		{
-			if ( ::WaitForSingleObject( game_process, INFINITE ) != WAIT_OBJECT_0 )
-				return;
-
-			::ClipCursor( nullptr );
-			app::context().input.set_key_gate( 0, false );
-			app::context().input.set_movement_gate( {}, false );
-			app::context().input.key( VK_ESCAPE, false );
-			const std::array movement_releases{
-				platform::windows::input_gateway::key_transition{ VK_CONTROL, false },
-				platform::windows::input_gateway::key_transition{ VK_F24, false },
-			};
-			app::context().input.keys( movement_releases );
-			app::context().input.pointer(
-				0, 0,
-				platform::windows::pointer_action::primary_up
-					| platform::windows::pointer_action::secondary_up );
-
-			app::context().overlay.request_shutdown( );
-		} ).detach( );
-
-		std::thread( app::workers::game ).detach( );
-		std::thread( app::workers::movement ).detach( );
-		std::thread( app::workers::combat ).detach( );
-		std::thread( app::workers::nade_helper ).detach( );
-		std::thread( app::workers::seed_trigger ).detach( );
-#if defined( VESTA_ENABLE_CONSOLE ) && VESTA_ENABLE_CONSOLE
-		std::thread( app::workers::watchdog ).detach( );
-#endif
-
-#if defined(VESTA_WINDOWED_PROFILE) && VESTA_WINDOWED_PROFILE
-		std::thread([] {
-			::Sleep(90'000);
-			app::context().overlay.request_shutdown();
-		}).detach();
-#endif
-
-		if ( !app::context().overlay.launch( ) )
-		{
-			scripting::runtime().shutdown( );
-            simulation::trace_session::shutdown();
-            simulation::shot_trace::shutdown();
-			::ExitProcess(EXIT_FAILURE);
-		}
-	}
-	scripting::runtime().shutdown( );
-
-    simulation::trace_session::shutdown();
-    simulation::shot_trace::shutdown();
-	::ExitProcess( EXIT_SUCCESS );
+    auto& journal = diagnostics::process_journal();
+    if (!journal.start())
+        diagnostics::process_log().warning("[startup] the journal cannot write its files; events are not recorded");
+    const bool previous_crash = diagnostics::take_previous_crash();
+    if (!diagnostics::install_crash_recorder())
+        diagnostics::process_log().warning("[startup] crash recorder unavailable; a crash will leave no record");
+    diagnostics::emit(diagnostics::event::bootstrap_begin);
+    if (previous_crash)
+    {
+        diagnostics::health().previous_session_crashed.store(true, std::memory_order_release);
+        diagnostics::emit(diagnostics::event::startup_previous_crash, diagnostics::severity::warning);
+    }
+    auto result = EXIT_FAILURE;
+    const foundation::scope_exit finish(
+        [&]() noexcept
+        {
+            diagnostics::emit(diagnostics::event::bootstrap_exit,
+                              result == EXIT_SUCCESS ? diagnostics::severity::information
+                                                     : diagnostics::severity::error,
+                              diagnostics::code_domain::system, static_cast<std::uint32_t>(result));
+            journal.stop();
+        });
+    try
+    {
+        result = run(argc, argv);
+        return result;
+    }
+    catch (const std::system_error& error)
+    {
+        diagnostics::emit(diagnostics::event::bootstrap_exception, diagnostics::severity::error,
+                          diagnostics::code_domain::system, static_cast<std::uint32_t>(error.code().value()));
+        wchar_t message[160]{};
+        std::swprintf(message, std::size(message), L"Vesta initialization failed (system error %d).",
+                      error.code().value());
+        ::MessageBoxW(nullptr, message, L"Vesta startup", MB_OK | MB_ICONERROR);
+    }
+    catch (...)
+    {
+        diagnostics::emit(diagnostics::event::bootstrap_exception, diagnostics::severity::error);
+        ::MessageBoxW(nullptr, L"Vesta initialization failed. Resources were released.", L"Vesta startup",
+                      MB_OK | MB_ICONERROR);
+    }
+    return result;
 }

@@ -8,6 +8,15 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+# Windows PowerShell's path cmdlets reject extended-length (\\?\) names.
+function ConvertTo-PlainPath([string]$Path) {
+    if ($Path.StartsWith('\\?\UNC\')) { return '\\' + $Path.Substring(8) }
+    if ($Path.StartsWith('\\?\')) { return $Path.Substring(4) }
+    return $Path
+}
+$Root = ConvertTo-PlainPath $Root
+$Runtime = ConvertTo-PlainPath $Runtime
+$HtmlFile = ConvertTo-PlainPath $HtmlFile
 try { [Diagnostics.Process]::GetCurrentProcess().PriorityClass = 'BelowNormal' } catch { }
 if ($Session -notmatch '^[A-Za-z0-9-]{1,96}$') { throw 'invalid session id' }
 $statusFile = Join-Path $Runtime "$Session-status.json"
@@ -124,7 +133,9 @@ function Install-Cloudflared([string]$LocalUrl) {
 
 function Start-CloudflareTunnel([int]$Port, [string]$LocalUrl) {
     Remove-Item -LiteralPath $tunnelOut,$tunnelErr -Force -ErrorAction SilentlyContinue
-
+    # Never inherit ~/.cloudflared/config.yml. A named-tunnel ingress config can
+    # accept the Quick Tunnel connection but answer every public request with
+    # its catch-all 404 route.
     [IO.File]::WriteAllText($cloudflaredConfig, "no-autoupdate: true`n", [Text.UTF8Encoding]::new($false))
     $processInfo = [Diagnostics.ProcessStartInfo]::new()
     $processInfo.FileName = $cloudflaredExe

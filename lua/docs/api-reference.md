@@ -47,8 +47,9 @@
 - `vesta.helpers.start(relative_ps1, args) -> bool [, error]`
 - `vesta.helpers.copy_text(text) -> bool`
 
-`start` accepts only a `.ps1` file inside the active package directory and
-returns immediately after creating the external process.
+Only the built-in web radar sees `vesta.helpers` (see the sandbox section of the README); for every other script
+the table is absent. `start` accepts only a `.ps1` file inside the active package directory and returns immediately
+after creating the external process.
 
 ## Bundled assets
 

@@ -1,30 +1,34 @@
 #pragma once
 
-#include <core/input/input.hpp>
-#include <core/memory/addresses.hpp>
-#include <core/memory/modules.hpp>
-#include <core/memory/process.hpp>
-#include <render/menu/menu.hpp>
-#include <render/overlay/overlay.hpp>
-#include <system/diagnostics.hpp>
+#include <platform/windows/input.hpp>
+#include <game/memory/addresses.hpp>
+#include <game/memory/memory_services.hpp>
+#include <game/memory/modules.hpp>
+#include <platform/windows/process.hpp>
+#include <ui/menu/menu.hpp>
+#include <ui/overlay/overlay.hpp>
+#include <diagnostics/log.hpp>
 
-namespace app {
+namespace app
+{
 
-	struct context_t
-	{
-		platform::windows::diagnostic_sink diagnostics{};
-		platform::windows::input_gateway input{};
-		platform::windows::process_session process{};
-		platform::windows::module_catalog modules{};
-		game::address_catalog addresses{};
-		overlay_t overlay{};
-		menu_t menu{};
-	};
+struct context_t
+{
+    diagnostics::logger diagnostics{};
+    platform::windows::input_gateway input{};
+    platform::windows::process_session process{};
+    game::module_catalog modules{};
+    game::address_catalog addresses{};
+    // What the game-memory adapters need, bound to the objects above; they never reach for this context.
+    game::memory_services memory{process, modules, diagnostics};
+    ui::overlay_t overlay{};
+    ui::menu_t menu{};
+};
 
-	inline context_t& context( )
-	{
-		static context_t instance{};
-		return instance;
-	}
+inline context_t& context()
+{
+    static context_t instance{};
+    return instance;
+}
 
 } // namespace app

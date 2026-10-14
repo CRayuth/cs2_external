@@ -1,9 +1,11 @@
 # Web Radar example
 
 The user-facing distribution is one portable file: `scripts/Vesta Web Radar.lua`.
-The maintainable sources are in `scripts/vesta_web_radar`; the generated Lua
-embeds and extracts the helper and frontend automatically when enabled. It
-demonstrates an intentionally separated runtime architecture:
+The maintainable sources are in `lua/packages/web-radar`; the generated Lua
+embeds and extracts the helper and frontend automatically when enabled. It is
+the only script that runs outside the sandbox: Vesta recognises the exact file by
+the SHA-256 compiled into the build, so an edited copy runs restricted and cannot
+start the helper. It demonstrates an intentionally separated runtime architecture:
 
 1. The below-normal Lua worker polls `vesta.game.radar_snapshot()` at 20 Hz and
    writes a compact, double-buffered JSON state in `vesta.api.data_dir`. It does

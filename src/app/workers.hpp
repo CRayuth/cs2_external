@@ -1,18 +1,16 @@
 #pragma once
 
-#include <memory>
-#include <string>
+#include <platform/windows/worker_control.hpp>
 
-namespace app::workers {
+namespace app::workers
+{
 
-	void game( );
-	void movement( );
-	void combat( );
-	void nade_helper( );
-	void seed_trigger( );
-	void watchdog( );
-
-	// Level currently loaded in the game ("de_mirage"), empty when not in one.
-	[[nodiscard]] std::shared_ptr<const std::string> current_map( );
+using control = platform::windows::worker_control;
+void game(control);
+void movement(control);
+void combat(control);
+void nade_helper(control);
+void seed_trigger(control);
+void watchdog(control);
 
 } // namespace app::workers

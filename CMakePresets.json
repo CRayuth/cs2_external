@@ -26,7 +26,6 @@
       "inherits": "msvc-base",
       "binaryDir": "${sourceDir}/build/release",
       "cacheVariables": {
-        "VESTA_INSTALLED_UIACCESS": "OFF",
         "VESTA_PERF_LOG": "OFF",
         "VESTA_WINDOWED_PROFILE": "OFF",
         "VESTA_WINDOWED_SESSION": "OFF",
@@ -39,7 +38,8 @@
       "inherits": "release",
       "binaryDir": "${sourceDir}/build/profile",
       "cacheVariables": {
-        "VESTA_PERF_LOG": "ON"
+        "VESTA_PERF_LOG": "ON",
+        "VESTA_OUTPUT_NAME": "vesta-profile"
       }
     }
   ],

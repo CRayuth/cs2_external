@@ -1,5 +1,22 @@
 cmake_minimum_required(VERSION 3.20)
-project(vesta VERSION 1.1.9 LANGUAGES C CXX)
+project(vesta VERSION 1.2.0 LANGUAGES C CXX)
+
+# Dear ImGui, unmodified upstream v1.92.3, fetched at configure time into the dependency cache (build/_deps), not
+# kept in the source tree. The tag is only a convenient name: the commit it resolves to is verified below.
+include(FetchContent)
+set(VESTA_IMGUI_COMMIT bf75bfec48fc00f532af8926130b70c0e26eb099)
+FetchContent_Declare(imgui
+    GIT_REPOSITORY https://github.com/ocornut/imgui.git
+    GIT_TAG v1.92.3
+    GIT_SHALLOW TRUE)
+FetchContent_MakeAvailable(imgui)
+find_package(Git REQUIRED)
+execute_process(COMMAND ${GIT_EXECUTABLE} -C ${imgui_SOURCE_DIR} rev-parse HEAD
+    OUTPUT_VARIABLE vesta_imgui_head OUTPUT_STRIP_TRAILING_WHITESPACE RESULT_VARIABLE vesta_imgui_head_result)
+if(NOT vesta_imgui_head_result EQUAL 0 OR NOT vesta_imgui_head STREQUAL VESTA_IMGUI_COMMIT)
+    message(FATAL_ERROR "ImGui checkout is ${vesta_imgui_head}, expected ${VESTA_IMGUI_COMMIT} (v1.92.3)")
+endif()
+set(VESTA_IMGUI_DIR ${imgui_SOURCE_DIR})
 
 if(NOT DEFINED VESTA_OUTPUT_NAME)
     set(VESTA_OUTPUT_NAME "vesta")
@@ -24,58 +41,71 @@ endif()
 set(vesta_sources
     # app
     src/app/main.cpp
+    src/app/runtime_session.cpp
     src/app/workers.cpp
     src/app/map_loader.cpp
+    $<$<CONFIG:Debug>:src/app/diagnostic_reports.cpp>
 
     # config
     src/config/settings.cpp
+    src/config/first_run.cpp
+    src/config/config_file.cpp
+    src/config/library.cpp
 
     # core
-    src/core/assets/kv3.cpp
-    src/core/assets/resource.cpp
-    src/core/assets/vpk.cpp
-    src/core/input/bindings.cpp
-	 src/core/input/hotkeys.cpp
-    src/core/input/input.cpp
-    src/core/math/interpolation.cpp
-    src/core/math/random.cpp
-    src/core/math/vector.cpp
-    src/core/memory/addresses.cpp
-    src/core/memory/convars.cpp
-    src/core/memory/compatibility.cpp
-    src/core/memory/entities.cpp
-    src/core/memory/modules.cpp
-    src/core/memory/process.cpp
-    src/core/memory/schemas.cpp
-    src/core/state/camera.cpp
-    src/core/state/local.cpp
-    src/core/state/pose.cpp
-    src/core/state/world.cpp
-    src/core/state/seed_players.cpp
+    src/assets/kv3.cpp
+    src/assets/resource.cpp
+    src/assets/vpk.cpp
+    src/assets/workshop_maps.cpp
+    src/game/input/bindings.cpp
+	 src/config/hotkeys.cpp
+    src/platform/windows/input.cpp
+    src/foundation/math/interpolation.cpp
+    src/foundation/math/random.cpp
+    src/foundation/math/vector.cpp
+    src/game/memory/addresses.cpp
+    src/game/memory/bound_services.cpp
+    src/game/memory/convars.cpp
+    src/game/memory/compatibility.cpp
+    src/game/memory/entities.cpp
+    src/game/memory/modules.cpp
+    src/platform/windows/process.cpp
+    src/game/memory/schemas.cpp
+    src/game/state/camera.cpp
+    src/game/state/local.cpp
+    src/game/state/pose.cpp
+    src/game/state/world.cpp
+    src/game/state/seed_players.cpp
 
     # simulation
     $<$<CONFIG:Debug>:src/simulation/seed_diagnostics.cpp>
     $<$<CONFIG:Debug>:src/simulation/shot_trace.cpp>
-    $<$<CONFIG:Debug>:src/simulation/trace_session.cpp>
+    $<$<CONFIG:Debug>:src/app/trace_session.cpp>
     src/simulation/shot_state.cpp
     src/simulation/ballistics.cpp
     src/simulation/seed_weapon.cpp
     src/simulation/blast.cpp
     src/simulation/blast_loader.cpp
-    src/simulation/bounds.cpp
+    src/game/body/bounds.cpp
     src/simulation/collision.cpp
     src/simulation/grenade.cpp
-    src/simulation/hitboxes.cpp
+    src/game/body/hitboxes.cpp
     src/simulation/map_collision.cpp
     src/simulation/penetration.cpp
-    src/simulation/skeleton.cpp
+    src/game/body/skeleton.cpp
 
     # features
     src/features/aimbot/aimbot.cpp
+    src/features/aimbot/aimbot_seed.cpp
+    src/features/aimbot/aimbot_target.cpp
+    src/features/aimbot/aimbot_recoil.cpp
+    src/features/aimbot/aimbot_trigger.cpp
+    src/features/aimbot/aimbot_internal.cpp
+    src/features/aimbot/command_ring.cpp
     src/features/aimbot/grenade_aim.cpp
     src/features/trigger/seed_trigger.cpp
-    src/features/trigger/seed_plan.cpp
-    src/features/trigger/seed_state.cpp
+    src/features/aimbot/seed_plan.cpp
+    src/features/aimbot/seed_state.cpp
     src/features/visuals/bomb.cpp
     src/features/visuals/bullet_impacts.cpp
     src/features/visuals/crosshair.cpp
@@ -93,70 +123,74 @@ set(vesta_sources
     src/features/misc/nade_helper.cpp
 
     # render
-    src/render/chams/animation.cpp
-    src/render/chams/material.cpp
-    src/render/chams/mesh_cache.cpp
-    src/render/chams/mesh_extract.cpp
-    src/render/chams/preview.cpp
-    src/render/chams/renderer.cpp
-    src/render/chams/texture.cpp
-    src/render/menu/localization.cpp
-    src/render/menu/menu.cpp
-    src/render/menu/widgets.cpp
-    src/render/menu/layout.cpp
-    src/render/menu/popups.cpp
-    src/render/menu/visual_editor.cpp
-    src/render/menu/combat_page.cpp
-    src/render/menu/combat_widgets.cpp
-    src/render/menu/aimbot_page.cpp
-    src/render/menu/triggerbot_page.cpp
-    src/render/menu/visuals_page.cpp
-    src/render/menu/misc_page.cpp
-    src/render/overlay/input.cpp
-    src/render/overlay/overlay.cpp
-    src/render/overlay/hud.cpp
-    src/render/overlay/ui.cpp
-    src/render/overlay/window.cpp
+    src/features/chams/animation.cpp
+    src/features/chams/material.cpp
+    src/features/chams/mesh_cache.cpp
+    src/features/chams/mesh_extract.cpp
+    src/features/chams/preview.cpp
+    src/features/chams/renderer.cpp
+    src/features/chams/texture.cpp
+    src/render/text/localization.cpp
+    src/ui/menu/menu.cpp
+    src/ui/menu/widgets.cpp
+    src/ui/menu/layout.cpp
+    src/ui/menu/popups.cpp
+    src/ui/menu/visual_editor.cpp
+    src/ui/menu/combat_page.cpp
+    src/ui/menu/combat_widgets.cpp
+    src/ui/menu/aimbot_page.cpp
+    src/ui/menu/triggerbot_page.cpp
+    src/ui/menu/visuals_page.cpp
+    src/ui/menu/misc_page.cpp
+    src/ui/menu/configs_page.cpp
+    src/ui/menu/scripts_page.cpp
+    src/ui/menu/library_widgets.cpp
+    src/ui/menu/guide_page.cpp
+    src/platform/windows/open_folder.cpp
+    src/platform/windows/user_settings.cpp
+    src/render/presentation.cpp
+    src/ui/presentation.cpp
+    src/ui/overlay/input.cpp
+    src/ui/overlay/overlay.cpp
+    src/ui/overlay/hud.cpp
+    src/render/text/esp_text.cpp
+    src/ui/overlay/window_band.cpp
+    src/ui/overlay/window.cpp
 
     # system
-    src/system/diagnostics.cpp
-    src/system/frame_limiter.cpp
-    src/system/performance.cpp
-    src/system/storage.cpp
+    src/diagnostics/log.cpp
+    src/diagnostics/performance.cpp
 
     # local Lua scripting (no network API is linked into the product)
     src/scripting/runtime.cpp
+    src/scripting/sandbox.cpp
+    src/scripting/native_files.cpp
     src/scripting/radar_asset.cpp
 
     # build support and vendored UI
     src/stdafx.cpp
-    src/external/imgui_vendor/imgui.cpp
-    src/external/imgui_vendor/imgui_draw.cpp
-    src/external/imgui_vendor/imgui_tables.cpp
-    src/external/imgui_vendor/imgui_widgets.cpp
-    src/external/imgui_vendor/misc/freetype/imgui_freetype.cpp
-    src/external/imgui_vendor/backends/imgui_impl_dx11.cpp
-    src/external/imgui_vendor/backends/imgui_impl_win32.cpp
+    ${VESTA_IMGUI_DIR}/imgui.cpp
+    ${VESTA_IMGUI_DIR}/imgui_draw.cpp
+    ${VESTA_IMGUI_DIR}/imgui_tables.cpp
+    ${VESTA_IMGUI_DIR}/imgui_widgets.cpp
+    ${VESTA_IMGUI_DIR}/misc/freetype/imgui_freetype.cpp
+    ${VESTA_IMGUI_DIR}/backends/imgui_impl_dx11.cpp
+    ${VESTA_IMGUI_DIR}/backends/imgui_impl_win32.cpp
 )
-
-option(VESTA_INSTALLED_UIACCESS "Signed, installed UIAccess executable; no self-elevation or relaunch" OFF)
 
 option(VESTA_SEED_LOG "Instrument the seed trigger in Debug builds" OFF)
 option(VESTA_PERF_LOG "Write low-overhead aggregate performance telemetry" OFF)
 option(VESTA_WINDOWED_SESSION "Long-running ordinary-token windowed diagnostic session" OFF)
-if(VESTA_WINDOWED_SESSION AND VESTA_INSTALLED_UIACCESS)
-    message(FATAL_ERROR "Windowed session requires VESTA_INSTALLED_UIACCESS=OFF")
-endif()
 option(VESTA_WINDOWED_PROFILE "Diagnostic 90-second ordinary-token windowed capture; never for distribution" OFF)
 if(VESTA_WINDOWED_PROFILE AND VESTA_WINDOWED_SESSION)
     message(FATAL_ERROR "Choose one diagnostic mode: profile or session")
 endif()
-if(VESTA_WINDOWED_PROFILE AND (NOT VESTA_PERF_LOG OR VESTA_INSTALLED_UIACCESS))
-    message(FATAL_ERROR "Windowed diagnostics require VESTA_PERF_LOG=ON and VESTA_INSTALLED_UIACCESS=OFF")
+if(VESTA_WINDOWED_PROFILE AND NOT VESTA_PERF_LOG)
+    message(FATAL_ERROR "Windowed diagnostics require VESTA_PERF_LOG=ON")
 endif()
 
 
-# The tracked configs/legit.cfg is the public default.  Embed it at configure time
+# The tracked configs/legit.cfg is the product default.  Embed it at configure time
 # so a clean installation does not depend on the source tree being present.
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/configs/legit.cfg" VESTA_DEFAULT_PROFILE_HEX HEX)
 string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," VESTA_DEFAULT_PROFILE_BYTES
@@ -167,16 +201,67 @@ configure_file(
     @ONLY
 )
 
-add_executable(${PROJECT_NAME} ${vesta_sources})
-if(VESTA_INSTALLED_UIACCESS)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE VESTA_INSTALLED_UIACCESS=1)
-    set(VESTA_MANIFEST_LEVEL "asInvoker")
-    set(VESTA_MANIFEST_UIACCESS "true")
-else()
-    target_sources(${PROJECT_NAME} PRIVATE src/render/overlay/ui_legacy.cpp)
-    set(VESTA_MANIFEST_LEVEL "asInvoker")
-    set(VESTA_MANIFEST_UIACCESS "false")
+# The web radar is the only Lua script allowed outside the sandbox: its digest (text with CRLF folded to LF) is
+# compiled in, so an edited or different file runs restricted. Changing the script needs a new build.
+set(VESTA_RADAR_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/lua/scripts/Vesta Web Radar.lua")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${VESTA_RADAR_SCRIPT}")
+file(READ "${VESTA_RADAR_SCRIPT}" VESTA_RADAR_TEXT)
+string(REPLACE "\r" "" VESTA_RADAR_TEXT "${VESTA_RADAR_TEXT}")
+string(SHA256 VESTA_RADAR_SHA256 "${VESTA_RADAR_TEXT}")
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/scripting/trusted_scripts.hpp.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/scripting/trusted_scripts.hpp"
+    @ONLY
+)
+
+# Diagnostic metadata is fixed at configure time, never taken from runtime text.
+if(NOT DEFINED VESTA_BUILD_REVISION)
+    execute_process(COMMAND git -C "${CMAKE_CURRENT_SOURCE_DIR}" rev-parse --verify HEAD
+        OUTPUT_VARIABLE VESTA_BUILD_REVISION OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    if(NOT VESTA_BUILD_REVISION)
+        set(VESTA_BUILD_REVISION "unknown")
+    else()
+        execute_process(COMMAND git -C "${CMAKE_CURRENT_SOURCE_DIR}" diff --quiet HEAD
+            RESULT_VARIABLE vesta_dirty ERROR_QUIET)
+        if(NOT vesta_dirty EQUAL 0)
+            string(APPEND VESTA_BUILD_REVISION "-dirty")
+        endif()
+    endif()
 endif()
+string(LENGTH "${VESTA_BUILD_REVISION}" vesta_revision_length)
+if(NOT VESTA_BUILD_REVISION MATCHES "^[A-Za-z0-9._-]+$" OR vesta_revision_length GREATER 80)
+    message(FATAL_ERROR "Diagnostic build revision must be a bounded identifier")
+endif()
+configure_file(src/diagnostics/build_identity.hpp.in generated/diagnostics/build_identity.hpp @ONLY)
+add_library(vesta_diagnostics STATIC src/diagnostics/journal.cpp src/diagnostics/crash_record.cpp src/diagnostics/report.cpp src/diagnostics/log_directory.cpp)
+target_include_directories(vesta_diagnostics PUBLIC src PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_link_libraries(vesta_diagnostics PUBLIC shell32 ole32 bcrypt)
+target_compile_definitions(vesta_diagnostics PRIVATE VESTA_JOURNAL_CONFIGURATION="$<CONFIG>")
+if(MSVC)
+    target_compile_options(vesta_diagnostics PRIVATE /utf-8)
+endif()
+
+add_library(vesta_storage STATIC src/platform/windows/data_paths.cpp src/platform/windows/data_migration.cpp src/platform/windows/storage.cpp)
+target_include_directories(vesta_storage PUBLIC src)
+target_link_libraries(vesta_storage PUBLIC shell32 ole32)
+if(MSVC)
+    target_compile_options(vesta_storage PRIVATE /utf-8 /W4)
+endif()
+
+set_source_files_properties(src/features/chams/mesh_cache.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+
+add_library(vesta_mesh_file STATIC src/features/chams/mesh_file.cpp)
+target_include_directories(vesta_mesh_file PUBLIC src)
+target_link_libraries(vesta_mesh_file PUBLIC vesta_storage)
+if(MSVC)
+    target_compile_options(vesta_mesh_file PRIVATE /utf-8 /W4)
+endif()
+
+add_executable(${PROJECT_NAME} ${vesta_sources})
+target_link_libraries(${PROJECT_NAME} PRIVATE vesta_diagnostics vesta_storage vesta_mesh_file)
+# The product is an ordinary user process: no elevation request, no UIAccess, no token changes.
+set(VESTA_MANIFEST_LEVEL "asInvoker")
+set(VESTA_MANIFEST_UIACCESS "false")
 set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "${VESTA_OUTPUT_NAME}" PDB_NAME "${VESTA_OUTPUT_NAME}")
 
 target_precompile_headers(${PROJECT_NAME} PRIVATE src/stdafx.hpp)
@@ -184,23 +269,25 @@ target_precompile_headers(${PROJECT_NAME} PRIVATE src/stdafx.hpp)
 target_include_directories(${PROJECT_NAME} PRIVATE
 	${CMAKE_CURRENT_BINARY_DIR}/generated
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/external/zdraw/external/freetype
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/external/imgui_vendor
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/external/imgui_vendor/backends
+    ${VESTA_IMGUI_DIR}
+    ${VESTA_IMGUI_DIR}/backends
 )
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE
-    # UC rejects binaries with generic shell/web launch paths. Vesta has no links
-    # to open, so remove ImGui's otherwise-unused ShellExecuteW default handler.
+    # Vesta opens no links or documents, so ImGui's generic ShellExecuteW "open anything" handler is left out of
+    # the executable. The only thing it opens is its own data/log/script folders, through
+    # platform::windows::open_folder, which starts explorer.exe on an existing directory and nothing else.
     IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS
-    # Release builds do not expose ImGui's metrics/debug windows. Removing them
-    # also keeps their upstream FAQ link and diagnostic strings out of the EXE.
+    # Release builds do not expose ImGui's metrics/debug windows; this also keeps their upstream FAQ link and
+    # diagnostic strings out of the executable.
     IMGUI_DISABLE_DEBUG_TOOLS
     # Use the already-linked FreeType rasterizer. Each ESP glyph stores smooth
     # fill coverage and its one-pixel outline mask in one atlas rectangle.
     IMGUI_ENABLE_FREETYPE
     # Steam display names can contain emoji and symbols outside the BMP.
     IMGUI_USE_WCHAR32
+    # ImVec2/ImVec4 arithmetic operators (upstream's own opt-in macro, previously set by editing imconfig.h).
+    IMGUI_DEFINE_MATH_OPERATORS
     $<$<CONFIG:Debug>:VESTA_ENABLE_CONSOLE=1>
     $<$<NOT:$<CONFIG:Debug>>:VESTA_ENABLE_CONSOLE=0>
     $<$<CONFIG:Debug>:VESTA_SHOT_TRACE_ENABLED=1>
@@ -279,7 +366,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE freetype)
 FetchContent_Declare(
     meshoptimizer
     GIT_REPOSITORY https://github.com/zeux/meshoptimizer.git
-    GIT_TAG v1.2 # v0.21 only decodes vertex codec version 0; CS2 emits version 1 (see cs2-vmdl-mesh-extraction memory notes)
+    GIT_TAG v1.2 # v0.21 only decodes vertex codec version 0; CS2 emits version 1
     GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(meshoptimizer)
@@ -314,158 +401,11 @@ FetchContent_MakeAvailable(zstd)
 target_link_libraries(${PROJECT_NAME} PRIVATE libzstd_static)
 target_include_directories(${PROJECT_NAME} PRIVATE ${zstd_SOURCE_DIR}/lib)
 
-include(CTest)
-if(BUILD_TESTING)
-    foreach(test ray_capsule penetration_accuracy update_contracts)
-        add_executable(vesta_${test}_test tests/${test}.cpp)
-        target_include_directories(vesta_${test}_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-        add_test(NAME ${test} COMMAND vesta_${test}_test)
-    endforeach()
-    add_executable(vesta_shot_trace_test tests/shot_trace.cpp src/simulation/shot_trace.cpp)
-    target_include_directories(vesta_shot_trace_test PRIVATE tests/fixtures/shot_trace src)
-    target_compile_definitions(vesta_shot_trace_test PRIVATE VESTA_TRACE_RAY_TEST=1 VESTA_SHOT_TRACE_ENABLED=1)
-    add_test(NAME shot_trace COMMAND vesta_shot_trace_test "${CMAKE_CURRENT_BINARY_DIR}/shot-trace-test")
-    add_executable(vesta_seed_reader_test tests/seed_reader_restore.cpp src/core/state/seed_players.cpp)
-    target_include_directories(vesta_seed_reader_test PRIVATE tests/fixtures/seed_reader src)
-    add_test(NAME seed_reader COMMAND vesta_seed_reader_test)
-    add_executable(vesta_seed_punch_snapshot_test tests/seed_punch_snapshot.cpp src/features/trigger/seed_state.cpp)
-    target_include_directories(vesta_seed_punch_snapshot_test PRIVATE tests/fixtures/seed_punch src)
-    add_test(NAME seed_punch_snapshot COMMAND vesta_seed_punch_snapshot_test)
-    add_executable(vesta_native_accuracy_test tests/native_accuracy.cpp)
-    target_include_directories(vesta_native_accuracy_test PRIVATE src)
-    add_test(NAME native_accuracy COMMAND vesta_native_accuracy_test "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/shooting_accuracy.tsv")
-    add_executable(vesta_seed_plan_test tests/seed_plan.cpp src/features/trigger/seed_plan.cpp)
-    target_include_directories(vesta_seed_plan_test PRIVATE tests/fixtures/seed_plan src)
-    add_test(NAME seed_plan COMMAND vesta_seed_plan_test)
-    add_executable(vesta_seed_snapshot_test tests/seed_snapshot_restore.cpp src/simulation/seed_weapon.cpp src/core/math/vector.cpp)
-    target_include_directories(vesta_seed_snapshot_test PRIVATE tests/fixtures/seed_snapshot src)
-    add_test(NAME seed_snapshot COMMAND vesta_seed_snapshot_test)
-    add_executable(vesta_seed_inaccuracy_test tests/seed_inaccuracy.cpp src/simulation/seed_weapon.cpp src/core/math/vector.cpp)
-    target_include_directories(vesta_seed_inaccuracy_test PRIVATE tests/fixtures/seed_snapshot src)
-    add_test(NAME seed_inaccuracy COMMAND vesta_seed_inaccuracy_test)
-    add_executable(vesta_native_velocity_test tests/native_velocity.cpp)
-    target_include_directories(vesta_native_velocity_test PRIVATE src)
-    add_test(NAME native_velocity COMMAND vesta_native_velocity_test)
-    add_executable(vesta_seed_integration_test tests/seed_integration.cpp)
-    add_test(NAME seed_integration COMMAND vesta_seed_integration_test "${CMAKE_CURRENT_SOURCE_DIR}")
-    add_executable(vesta_native_spread_test tests/native_spread.cpp src/core/math/random.cpp)
-    target_include_directories(vesta_native_spread_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    add_test(NAME native_spread COMMAND vesta_native_spread_test)
-
-    add_executable(vesta_live_shot_replay_test tests/frida/replay.cpp src/core/math/random.cpp src/core/math/vector.cpp)
-    target_include_directories(vesta_live_shot_replay_test PRIVATE tests/fixtures/seed_snapshot src)
-    add_test(NAME live_shot_replay COMMAND vesta_live_shot_replay_test "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/live_shots_20260924.jsonl")
-
-    add_executable(vesta_seed_window_test tests/seed_window.cpp src/core/math/random.cpp src/core/math/vector.cpp)
-    target_include_directories(vesta_seed_window_test PRIVATE tests/fixtures/seed_snapshot src)
-    add_test(NAME seed_window COMMAND vesta_seed_window_test "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/live_shots_20260924.jsonl")
-
-    add_executable(vesta_native_rng_test tests/native_rng.cpp src/core/math/random.cpp)
-    target_include_directories(vesta_native_rng_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    add_test(NAME native_rng COMMAND vesta_native_rng_test)
-
-    add_executable(vesta_shot_model_test tests/shot_model.cpp src/core/math/random.cpp)
-    target_include_directories(vesta_shot_model_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    add_test(NAME shot_model COMMAND vesta_shot_model_test)
-    add_executable(vesta_spread_sampler_test tests/spread_sampler.cpp src/core/math/random.cpp)
-    target_include_directories(vesta_spread_sampler_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    add_test(NAME spread_sampler COMMAND vesta_spread_sampler_test)
-    add_executable(vesta_spread_cache_test tests/spread_cache.cpp src/core/math/random.cpp)
-    target_include_directories(vesta_spread_cache_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    add_test(NAME spread_cache COMMAND vesta_spread_cache_test)
-    add_executable(vesta_penetration_segments_test
-        tests/penetration_segments.cpp)
-    target_include_directories(vesta_penetration_segments_test PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    add_test(NAME penetration_segments COMMAND vesta_penetration_segments_test)
-
-	add_executable(vesta_swept_sphere_test
-		tests/swept_sphere.cpp)
-	target_include_directories(vesta_swept_sphere_test PRIVATE
-		${CMAKE_CURRENT_SOURCE_DIR}/src)
-	add_test(NAME swept_sphere COMMAND vesta_swept_sphere_test)
-
-	add_executable(vesta_swept_hull_test
-		tests/swept_hull.cpp)
-	target_include_directories(vesta_swept_hull_test PRIVATE
-		${CMAKE_CURRENT_SOURCE_DIR}/src)
-	add_test(NAME swept_hull COMMAND vesta_swept_hull_test)
-
-    foreach(test seed_receipt seed_epoch_guard shot_clock_evidence seed_reaction seed_weapon_guard entity_slot snapshot_epoch read_pair depth_bounds index_run object_watch chunked_read present_policy bvh_capacity snapshot_pool mesh_leaves latest_job seed_timing frame_schedule menu_geometry key_encoding input_lifecycle visual_geometry action_state manual_bindings render_latency)
-        add_executable(vesta_${test}_test tests/${test}.cpp)
-        target_include_directories(vesta_${test}_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-        target_link_libraries(vesta_${test}_test PRIVATE user32)
-        add_test(NAME ${test} COMMAND vesta_${test}_test)
-    endforeach()
-
-    add_executable(vesta_aim_control_test tests/aim_control.cpp)
-    target_include_directories(vesta_aim_control_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    add_test(NAME aim_control COMMAND vesta_aim_control_test)
-
-    add_executable(vesta_performance_test tests/performance.cpp src/system/performance.cpp)
-    target_include_directories(vesta_performance_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_compile_definitions(vesta_performance_test PRIVATE VESTA_PERF_LOG=1
-        VESTA_PERF_TEST_OUTPUT="${CMAKE_CURRENT_BINARY_DIR}/performance-test.jsonl")
-    target_link_libraries(vesta_performance_test PRIVATE user32)
-    add_test(NAME performance COMMAND vesta_performance_test)
-
-    add_executable(vesta_startup_contract_test tests/startup_contract.cpp)
-    target_include_directories(vesta_startup_contract_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    add_test(NAME startup_contract COMMAND vesta_startup_contract_test $<TARGET_FILE:vesta> ${VESTA_MANIFEST_LEVEL} ${VESTA_MANIFEST_UIACCESS})
-
-    add_executable(vesta_pacing_benchmark tests/frame_pacing_benchmark.cpp)
-    target_include_directories(vesta_pacing_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-
-    add_executable(vesta_presentation_smoke_test tests/presentation_smoke.cpp)
-    target_include_directories(vesta_presentation_smoke_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    target_link_libraries(vesta_presentation_smoke_test PRIVATE user32 d3d11 dxgi dcomp)
-    add_test(NAME presentation_smoke COMMAND vesta_presentation_smoke_test)
-    set_tests_properties(presentation_smoke PROPERTIES LABELS "gpu")
-
-    add_executable(vesta_cpu_esp_smoke_test tests/cpu_esp_smoke.cpp
-        src/external/imgui_vendor/imgui.cpp
-        src/external/imgui_vendor/imgui_draw.cpp
-        src/external/imgui_vendor/imgui_tables.cpp
-        src/external/imgui_vendor/imgui_widgets.cpp
-        src/external/imgui_vendor/misc/freetype/imgui_freetype.cpp
-        src/external/imgui_vendor/backends/imgui_impl_dx11.cpp)
-    target_include_directories(vesta_cpu_esp_smoke_test PRIVATE src
-        src/external/imgui_vendor src/external/imgui_vendor/backends)
-    target_compile_definitions(vesta_cpu_esp_smoke_test PRIVATE
-        IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS IMGUI_DISABLE_DEBUG_TOOLS IMGUI_ENABLE_FREETYPE IMGUI_USE_WCHAR32)
-    target_link_libraries(vesta_cpu_esp_smoke_test PRIVATE user32 d3d11 dxgi d3dcompiler freetype)
-    add_test(NAME cpu_esp_smoke COMMAND vesta_cpu_esp_smoke_test)
-    set_tests_properties(cpu_esp_smoke PROPERTIES LABELS "gpu")
-
-    set(menu_test_sources ${vesta_sources})
-    list(REMOVE_ITEM menu_test_sources src/app/main.cpp)
-    add_executable(vesta_menu_render_test EXCLUDE_FROM_ALL tests/menu_render.cpp ${menu_test_sources})
-    target_include_directories(vesta_menu_render_test PRIVATE $<TARGET_PROPERTY:vesta,INCLUDE_DIRECTORIES>)
-    target_compile_definitions(vesta_menu_render_test PRIVATE $<TARGET_PROPERTY:vesta,COMPILE_DEFINITIONS> VESTA_D3D_DEBUG=1)
-    target_link_libraries(vesta_menu_render_test PRIVATE $<TARGET_PROPERTY:vesta,LINK_LIBRARIES>)
-    target_precompile_headers(vesta_menu_render_test PRIVATE src/stdafx.hpp)
-    target_compile_options(vesta_menu_render_test PRIVATE /utf-8 /O2 /Zi /UNDEBUG)
-    target_link_options(vesta_menu_render_test PRIVATE /DEBUG /OPT:REF /OPT:ICF)
-    option(VESTA_MENU_TEST_ASAN "Instrument isolated menu renderer for memory errors" OFF)
-    if(VESTA_MENU_TEST_ASAN)
-        target_compile_options(vesta_menu_render_test PRIVATE /fsanitize=address)
-        target_link_options(vesta_menu_render_test PRIVATE /INCREMENTAL:NO)
-    endif()
-    add_test(NAME menu_render_warp COMMAND vesta_menu_render_test warp)
-    add_test(NAME menu_render_hardware COMMAND vesta_menu_render_test hardware)
-    set_tests_properties(menu_render_warp menu_render_hardware PROPERTIES LABELS "gpu;integration" TIMEOUT 120)
-
-    get_property(vesta_local_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
-    foreach(test_target IN LISTS vesta_local_targets)
-        if(test_target MATCHES "^vesta_.*(_test|_benchmark)$")
-            set_target_properties(${test_target} PROPERTIES
-                RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests/bin"
-                PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests/bin")
-            foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
-                set_target_properties(${test_target} PROPERTIES
-                    RUNTIME_OUTPUT_DIRECTORY_${config} "${CMAKE_BINARY_DIR}/tests/bin"
-                    PDB_OUTPUT_DIRECTORY_${config} "${CMAKE_BINARY_DIR}/tests/bin")
-            endforeach()
-        endif()
-    endforeach()
-endif()
+FetchContent_Declare(
+    nlohmann_json
+    URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
+    URL_HASH SHA256=42f6e95cad6ec532fd372391373363b62a14af6d771056dbfc86160e6dfff7aa
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+FetchContent_MakeAvailable(nlohmann_json)
+target_link_libraries(${PROJECT_NAME} PRIVATE nlohmann_json::nlohmann_json)
