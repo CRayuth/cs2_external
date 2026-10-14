@@ -2,6 +2,10 @@
 
 <img src=".github/assets/vesta-visuals.png" alt="Vesta Visuals menu" width="100%">
 
+Vesta is a configurable Windows x64 project with combat assistance, a complete
+visual system, movement tools, grenade lineups, an in-game radar, and a
+sandboxed Lua API. The native client stays external: no injection and no driver.
+
 **A feature-complete external cheat for Counter-Strike 2.**
 
 <p>
@@ -13,10 +17,6 @@
 </p>
 
 </div>
-
-Vesta is a configurable Windows x64 project with combat assistance, a complete
-visual system, movement tools, grenade lineups, an in-game radar, and a
-sandboxed Lua API. The native client stays external: no injection and no driver.
 
 ## Quick start
 
@@ -34,8 +34,8 @@ restart Vesta.
 > [!CAUTION]
 > **Lua scripts.** Scripts run in a sandbox without file, process or network
 > access; only the bundled Vesta Web Radar, verified by its SHA-256, runs outside
-> it. A script can still change your settings and press keys, so run only scripts
-> you trust. Vetted scripts are published in this repository and on the Vesta website.
+> it. A script can still change your settings and press game keys while CS2 is in
+> focus, so run only scripts you trust. Vetted scripts are published in this repository and on the Vesta website.
 
 > [!TIP]
 > **Performance.** An external overlay shares CPU and GPU resources with the
@@ -43,11 +43,26 @@ restart Vesta.
 > render mode and set model, texture, shader, and particle detail to Low in CS2.
 
 > [!WARNING]
-> **VACnet / VAC Live — 24 September 2026.** Current reports indicate that
-> Aimbot, RCS and Triggerbot use can be detected and can cause a cooldown.
-> No FPS setting, play style or feature configuration guarantees protection.
-> The reliable way to avoid a cheat-related cooldown is not to play with cheats.
-> Vesta does not promise immunity from cooldowns or bans.
+> **VACnet / VAC Live — 9 October 2026.** Valve's servers appear to be running a
+> VACnet model with high Recall and low Precision.
+>
+> - Any Triggerbot use results in a cooldown, including seemingly ordinary taps without cheats.
+> - Aimbot and RCS use result in cooldowns.
+> - Kills while jumping, through smoke, against players at spawn (even with a knife or grenades), or through
+>   walls can trigger restrictions.
+> - The SSG 08 is effectively unusable. On a brand-new, clean account, I received a cooldown within the first
+>   five rounds of my first matchmaking game after getting completely legitimate kills with it. The weapon
+>   appears to be fundamentally broken from a detection standpoint.
+>
+> The inference model running on Valve's servers appears to be a relatively simple DL model trained on sparse
+> data with an implicit target.
+>
+> Essentially, when playing with WH only, the penalty may be triggered not by aiming through walls, but by the
+> kill event itself. The model may be evaluating the timing of the kill relative to the opponent's first
+> appearance from behind cover.
+>
+> In effect, WH can manually replicate Triggerbot behavior, with the time delta between the opponent's first
+> visibility and the kill acting as a key detection signal.
 
 ## Features
 
