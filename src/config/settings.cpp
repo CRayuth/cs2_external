@@ -726,7 +726,8 @@ static void to_json(json& j, const visual_profile::player::info_flags& f)
 		{"kit", f.kit_style}, {"scoped", f.scoped_style},
 		{"defusing", f.defusing_style}, {"flashed", f.flashed_style},
 		{"ping", f.ping_style}, {"distance", f.distance_style},
-		{"bomb_damage", f.bomb_damage_style}
+		{"bomb_damage", f.bomb_damage_style},
+		{"flash_countdown", f.flash_countdown}
 	};
 }
 
@@ -734,6 +735,7 @@ static void from_json(const json& j, visual_profile::player::info_flags& f)
 {
 	if (j.contains("enabled")) j.at("enabled").get_to(f.enabled);
 	if (j.contains("flags")) j.at("flags").get_to(f.flags);
+	if (j.contains("flash_countdown")) j.at("flash_countdown").get_to(f.flash_countdown);
 	const auto load_style = [&](const char* name, const char* legacy_color,
 		visual_profile::player::info_flags::style& style)
 	{
@@ -1136,6 +1138,12 @@ static void to_json(json& j, const visual_profile::bomb& b)
 		{"timer_text_color", b.timer_text_color},
 		{"show_info_panel", b.show_info_panel},
 		{"panel_background", b.panel_background},
+		{"defuse_alert", b.defuse_alert},
+		{"defuse_alert_sound", b.defuse_alert_sound},
+		{"plant_alert", b.plant_alert},
+		{"plant_color_ok", b.plant_color_ok},
+		{"plant_color_fail", b.plant_color_fail},
+		{"plant_color_unknown", b.plant_color_unknown},
 		{"show_safe_zone", b.show_safe_zone},
 		{"safe_zone_color", b.safe_zone_color},
 		{"safe_zone_bands", b.safe_zone_bands},
@@ -1160,6 +1168,12 @@ static void from_json(const json& j, visual_profile::bomb& b)
 	if (j.contains("timer_text_color")) j.at("timer_text_color").get_to(b.timer_text_color);
 	if (j.contains("show_info_panel")) j.at("show_info_panel").get_to(b.show_info_panel);
 	if (j.contains("panel_background")) j.at("panel_background").get_to(b.panel_background);
+	if (j.contains("defuse_alert")) j.at("defuse_alert").get_to(b.defuse_alert);
+	if (j.contains("defuse_alert_sound")) j.at("defuse_alert_sound").get_to(b.defuse_alert_sound);
+	if (j.contains("plant_alert")) j.at("plant_alert").get_to(b.plant_alert);
+	if (j.contains("plant_color_ok")) j.at("plant_color_ok").get_to(b.plant_color_ok);
+	if (j.contains("plant_color_fail")) j.at("plant_color_fail").get_to(b.plant_color_fail);
+	if (j.contains("plant_color_unknown")) j.at("plant_color_unknown").get_to(b.plant_color_unknown);
 	if (j.contains("show_safe_zone")) j.at("show_safe_zone").get_to(b.show_safe_zone);
 	if (j.contains("safe_zone_color")) j.at("safe_zone_color").get_to(b.safe_zone_color);
 	if (j.contains("safe_zone_bands")) j.at("safe_zone_bands").get_to(b.safe_zone_bands);
@@ -1258,6 +1272,7 @@ static void to_json(json& j, const visual_profile::no_flash& n)
 {
 	j = json{
 		{"enabled", n.enabled},
+		{"anti_flash", n.anti_flash},
 		{"max_distance", n.max_distance},
 		{"background_color", n.background_color},
 		{"wireframe_color", n.wireframe_color}
@@ -1267,6 +1282,7 @@ static void to_json(json& j, const visual_profile::no_flash& n)
 static void from_json(const json& j, visual_profile::no_flash& n)
 {
 	if (j.contains("enabled")) j.at("enabled").get_to(n.enabled);
+	if (j.contains("anti_flash")) j.at("anti_flash").get_to(n.anti_flash);
 	if (j.contains("max_distance")) j.at("max_distance").get_to(n.max_distance);
 	if (j.contains("background_color")) j.at("background_color").get_to(n.background_color);
 	if (j.contains("wireframe_color")) j.at("wireframe_color").get_to(n.wireframe_color);
@@ -1377,6 +1393,8 @@ static void to_json(json& j, const visual_profile::chams& c)
 			{"appearance", c.on_shot.appearance}}},
 		{"occlude_dynamic_doors", c.occlude_dynamic_doors},
 		{"occlude_smoke", c.occlude_smoke},
+		{"smooth_transition", c.smooth_transition},
+		{"transition_time", c.transition_time},
 		{"visible", c.visible},
 		{"invisible", c.invisible}
 	};
@@ -1413,9 +1431,12 @@ static void from_json(const json& j, visual_profile::chams& c)
 	}
 	if (j.contains("occlude_dynamic_doors")) j.at("occlude_dynamic_doors").get_to(c.occlude_dynamic_doors);
 	if (j.contains("occlude_smoke")) j.at("occlude_smoke").get_to(c.occlude_smoke);
+	if (j.contains("smooth_transition")) j.at("smooth_transition").get_to(c.smooth_transition);
+	if (j.contains("transition_time")) j.at("transition_time").get_to(c.transition_time);
 	if (j.contains("visible")) j.at("visible").get_to(c.visible);
 	if (j.contains("invisible")) j.at("invisible").get_to(c.invisible);
 	c.glow_effect.radius = std::clamp(c.glow_effect.radius, 0.5f, 16.0f);
+	c.transition_time = std::clamp(c.transition_time, 0.0f, 1.0f);
 	c.glow_effect.strength = std::clamp(c.glow_effect.strength, 0.0f, 1.0f);
 	c.glow_effect.layers = std::clamp(c.glow_effect.layers, 1, 6);
 	c.kill_effect.duration = std::clamp(c.kill_effect.duration, 0.2f, 3.0f);
@@ -1519,6 +1540,8 @@ static void from_json(const json& j, general_profile::hitmarker& h)
 static void to_json(json& j, const general_profile::hitsound& h)
 {
 	j = json{{"enabled", h.enabled}, {"style", h.style}, {"volume", h.volume},
+		{"kill_enabled", h.kill_enabled}, {"kill_style", h.kill_style},
+		{"kill_volume", h.kill_volume},
 		{"show_damage", h.show_damage}, {"damage_color", h.damage_color},
 		{"damage_size", h.damage_size}, {"damage_duration", h.damage_duration},
 		{"damage_rise", h.damage_rise}};
@@ -1529,6 +1552,9 @@ static void from_json(const json& j, general_profile::hitsound& h)
 	if (j.contains("enabled")) j.at("enabled").get_to(h.enabled);
 	if (j.contains("style")) j.at("style").get_to(h.style);
 	if (j.contains("volume")) j.at("volume").get_to(h.volume);
+	if (j.contains("kill_enabled")) j.at("kill_enabled").get_to(h.kill_enabled);
+	if (j.contains("kill_style")) j.at("kill_style").get_to(h.kill_style);
+	if (j.contains("kill_volume")) j.at("kill_volume").get_to(h.kill_volume);
 	if (j.contains("show_damage")) j.at("show_damage").get_to(h.show_damage);
 	if (j.contains("damage_color")) j.at("damage_color").get_to(h.damage_color);
 	if (j.contains("damage_size")) j.at("damage_size").get_to(h.damage_size);
@@ -1536,6 +1562,8 @@ static void from_json(const json& j, general_profile::hitsound& h)
 	if (j.contains("damage_rise")) j.at("damage_rise").get_to(h.damage_rise);
 	h.style = std::clamp(h.style, 0, 4);
 	h.volume = std::clamp(h.volume, 0.0f, 1.0f);
+	h.kill_style = std::clamp(h.kill_style, 0, 4);
+	h.kill_volume = std::clamp(h.kill_volume, 0.0f, 1.0f);
 	h.damage_size = std::clamp(h.damage_size, 8.0f, 28.0f);
 	h.damage_duration = std::clamp(h.damage_duration, 0.15f, 2.0f);
 	h.damage_rise = std::clamp(h.damage_rise, 0.0f, 100.0f);
@@ -1663,6 +1691,35 @@ static void from_json(const json& j, general_profile::keybind_list& k)
 	if (j.contains("show_toggle")) j.at("show_toggle").get_to(k.show_toggle);
 }
 
+static void to_json(json& j, const general_profile::aimbot_status& s)
+{
+	j = json{{"enabled", s.enabled}, {"layout", s.layout}, {"show_mode", s.show_mode}};
+}
+
+static void from_json(const json& j, general_profile::aimbot_status& s)
+{
+	if (j.contains("enabled")) j.at("enabled").get_to(s.enabled);
+	if (j.contains("layout")) j.at("layout").get_to(s.layout);
+	if (j.contains("show_mode")) j.at("show_mode").get_to(s.show_mode);
+}
+
+static void to_json(json& j, const general_profile::flash_status& f)
+{
+	j = json{{"enabled", f.enabled}, {"layout", f.layout},
+		{"show_local", f.show_local}, {"show_enemies", f.show_enemies},
+		{"max_enemies", f.max_enemies}};
+}
+
+static void from_json(const json& j, general_profile::flash_status& f)
+{
+	if (j.contains("enabled")) j.at("enabled").get_to(f.enabled);
+	if (j.contains("layout")) j.at("layout").get_to(f.layout);
+	if (j.contains("show_local")) j.at("show_local").get_to(f.show_local);
+	if (j.contains("show_enemies")) j.at("show_enemies").get_to(f.show_enemies);
+	if (j.contains("max_enemies")) j.at("max_enemies").get_to(f.max_enemies);
+	f.max_enemies = std::clamp(f.max_enemies, 1, 5);
+}
+
 static void to_json(json& j, const general_profile::bomb_info& b)
 {
 	j = json{};
@@ -1682,6 +1739,28 @@ static void from_json(const json& j, general_profile::bomb_info& b)
 		b.layout.version = 0;
 		if (j.contains("position_x")) j.at("position_x").get_to(b.layout.legacy_position_x);
 		if (j.contains("position_y")) j.at("position_y").get_to(b.layout.legacy_position_y);
+	}
+}
+
+static void to_json(json& j, const general_profile::plant_alert& a)
+{
+	j = json{};
+	if (a.layout.version >= 1) j["layout"] = a.layout;
+	else
+	{
+		j["position_x"] = a.layout.legacy_position_x;
+		j["position_y"] = a.layout.legacy_position_y;
+	}
+}
+
+static void from_json(const json& j, general_profile::plant_alert& a)
+{
+	if (j.contains("layout")) j.at("layout").get_to(a.layout);
+	else
+	{
+		a.layout.version = 0;
+		if (j.contains("position_x")) j.at("position_x").get_to(a.layout.legacy_position_x);
+		if (j.contains("position_y")) j.at("position_y").get_to(a.layout.legacy_position_y);
 	}
 }
 
@@ -1856,7 +1935,10 @@ static void to_json(json& j, const general_profile& m)
 		{"m_spectator_list", m.m_spectator_list},
 		{"m_event_log", m.m_event_log},
 		{"m_keybind_list", m.m_keybind_list},
+		{"m_aimbot_status", m.m_aimbot_status},
+		{"m_flash_status", m.m_flash_status},
 		{"m_bomb_info", m.m_bomb_info},
+		{"m_plant_alert", m.m_plant_alert},
 		{"m_bunny_hop", m.m_bunny_hop},
 		{"m_edge_jump", m.m_edge_jump},
 		{"m_game_controls", m.m_game_controls},
@@ -1889,7 +1971,10 @@ static void from_json(const json& j, general_profile& m)
 	if (j.contains("m_spectator_list")) j.at("m_spectator_list").get_to(m.m_spectator_list);
 	if (j.contains("m_event_log")) j.at("m_event_log").get_to(m.m_event_log);
 	if (j.contains("m_keybind_list")) j.at("m_keybind_list").get_to(m.m_keybind_list);
+	if (j.contains("m_aimbot_status")) j.at("m_aimbot_status").get_to(m.m_aimbot_status);
+	if (j.contains("m_flash_status")) j.at("m_flash_status").get_to(m.m_flash_status);
 	if (j.contains("m_bomb_info")) j.at("m_bomb_info").get_to(m.m_bomb_info);
+	if (j.contains("m_plant_alert")) j.at("m_plant_alert").get_to(m.m_plant_alert);
 	if (j.contains("m_bunny_hop")) j.at("m_bunny_hop").get_to(m.m_bunny_hop);
 	if (j.contains("m_edge_jump")) j.at("m_edge_jump").get_to(m.m_edge_jump);
 	if (j.contains("m_game_controls")) j.at("m_game_controls").get_to(m.m_game_controls);
@@ -2059,6 +2144,18 @@ bool apply_default_config()
 	{
 		return false;
 	}
+}
+
+void reset_to_defaults()
+{
+	const auto language = general_settings.language;
+	combat_settings = combat_profile{};
+	visual_settings = visual_profile{};
+	general_settings = general_profile{};
+	apply_default_config();
+	general_settings.language = language;
+	publish_runtime_snapshot();
+	storage.write_cache();
 }
 
 bool configuration_store::write_to(const std::string& path) const

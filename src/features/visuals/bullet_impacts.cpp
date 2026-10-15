@@ -671,7 +671,9 @@ namespace features::visuals {
 				this->m_hitmarkers.erase( this->m_hitmarkers.begin( ) );
 		}
 		const auto& feedback = this->m_config_snapshot->general.m_hitsound;
-		if ( feedback.enabled )
+		if ( killed && feedback.kill_enabled )
+			features::visuals::hitsounds().play( feedback.kill_style, feedback.kill_volume );
+		else if ( feedback.enabled )
 			features::visuals::hitsounds().play( feedback.style, feedback.volume );
 		if ( feedback.show_damage )
 		{

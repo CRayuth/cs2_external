@@ -1,5 +1,6 @@
 #pragma once
 
+#include <features/visuals/plant_alert.hpp>
 #include <simulation/ballistics.hpp>
 #include <system/snapshot_pool.hpp>
 #include <simulation/grenade.hpp>
@@ -99,6 +100,10 @@ namespace features::visuals {
 				int bomb_site{ 0 };
 				int predicted_damage{ -1 };
 				int local_health{ 0 };
+				bool defuse_verdict_valid{ false };
+				int defuse_verdict{}; // 1 safe, 2 start now, 3 too late
+				float defuse_need{ 10.0f };
+				int defuse_kit_state{}; // 0 unknown, 1 no kit, 2 kit
 				foundation::vec3 position{};
 			};
 			struct damage_snapshot
@@ -113,6 +118,7 @@ namespace features::visuals {
 			void on_render( zdraw::draw_list& draw_list );
 			[[nodiscard]] hud_snapshot info_snapshot( ) const;
 			[[nodiscard]] damage_snapshot player_damage_snapshot( ) const;
+			[[nodiscard]] plant_alert_state plant_snapshot( ) const;
 
 		private:
 			struct bomb_data
@@ -127,6 +133,10 @@ namespace features::visuals {
 				int bomb_site{ 0 };
 				std::int32_t baked_site{ -1 };
 				int predicted_damage{ -1 };
+				bool defuse_verdict_valid{ false };
+				int defuse_verdict{}; // 1 safe, 2 start now, 3 too late
+				float defuse_need{ 10.0f };
+				int defuse_kit_state{}; // 0 unknown, 1 no kit, 2 kit
 			};
 
 			struct active_bomb_data
@@ -170,6 +180,8 @@ namespace features::visuals {
 			mutable std::shared_mutex m_state_mutex{};
 			bomb_data m_sampled_planted{};
 			active_bomb_data m_sampled_active{};
+			plant_alert_sample m_sampled_plant{};
+			std::chrono::steady_clock::time_point m_sampled_plant_at{};
 			float m_sampled_game_time{};
 			int m_sampled_health{};
 			std::chrono::steady_clock::time_point m_sampled_at{};

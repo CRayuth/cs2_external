@@ -3,6 +3,7 @@
 #include <app/context.hpp>
 #include <core/input/bindings.hpp>
 #include <core/input/hotkeys.hpp>
+#include <core/memory/offsets_dump.hpp>
 #include <features/visuals/visuals.hpp>
 #include <features/visuals/hitsound.hpp>
 #include <render/chams/preview.hpp>
@@ -78,6 +79,19 @@ void menu_t::draw_misc()
                     color_row("Borders", p.palette.border);
                 });
             });
+        });
+        card_in_column("offset_dump", "OFFSET DUMP", 3, 0, [&] {
+            begin_row("Dump File", 148.0f);
+            clipped_row_text(game::offsets().status_text());
+            end_row();
+            const auto used = app::context().addresses.dump_globals;
+            begin_row("Used This Run", 148.0f);
+            clipped_row_text(used
+                ? std::format("{} global(s) taken from the dump", used)
+                : std::string{"every global came from live patterns"});
+            end_row();
+            if (button_row("Dump Reload", "Reload"))
+                game::offsets().load();
         });
         card_in_column("automation", "AUTOMATION", 1, 1,
                        [&] { toggle_row("Auto Accept Match", p.auto_accept); });
@@ -200,7 +214,7 @@ void menu_t::draw_misc()
     }
     else if (this->m_misc_group == 3)
     {
-        card("overlay", "OVERLAY", 6, [&] {
+        card("overlay", "OVERLAY", 8, [&] {
             toggle_row("OBS Bypass", p.obs_bypass);
             toggle_popup_row("Show Watermark", p.m_watermark.enabled, 4, [&] {
                 toggle_row("Show Ping", p.m_watermark.show_ping);
@@ -229,6 +243,14 @@ void menu_t::draw_misc()
                 toggle_row("Always On Binds", p.m_keybind_list.show_always);
                 toggle_row("Hold Binds", p.m_keybind_list.show_hold);
                 toggle_row("Toggle Binds", p.m_keybind_list.show_toggle);
+            });
+            toggle_popup_row("Show Aimbot Status", p.m_aimbot_status.enabled, 1, [&] {
+                toggle_row("Show Activation Mode", p.m_aimbot_status.show_mode);
+            });
+            toggle_popup_row("Show Flash Status", p.m_flash_status.enabled, 3, [&] {
+                toggle_row("My Flash", p.m_flash_status.show_local);
+                toggle_row("Enemy Flash", p.m_flash_status.show_enemies);
+                slider_row("Enemy Rows", p.m_flash_status.max_enemies, 1, 5);
             });
             toggle_row("Show Bomb Info", config::visual_settings.m_bomb.show_info_panel);
         });
@@ -420,13 +442,39 @@ void menu_t::draw_misc()
     }
     else
     {
-        card("config", "CFG FILE", 3, [&] {
+        const auto *reset_help = render::localization::tr(
+            "Restore every setting to the built-in defaults. Your language choice is kept.");
+        const float reset_width = std::max(1.0f, g_cards_width - 40.0f);
+        const int reset_help_rows = render::menu::wrapped_text_rows(
+            ImGui::CalcTextSize(reset_help, nullptr, false, reset_width).y,
+            ImGui::GetStyle().ItemSpacing.y, k_row_height);
+        card("config", "CFG FILE", 4 + reset_help_rows, [&] {
             auto &cfg = config::storage;
             text_input_row("File Name", cfg.name_buffer, sizeof(cfg.name_buffer));
             if (button_row("Export Named CFG", "Save As...", row_action_icon::save))
                 app::context().overlay.request_config_save();
             if (button_row("Open CFG", "Browse...", row_action_icon::folder))
                 app::context().overlay.request_config_load();
+            const auto now = std::chrono::steady_clock::now( );
+            const auto armed = this->m_config_reset_armed
+                && now - this->m_config_reset_at < std::chrono::seconds(3);
+            this->m_config_reset_armed = armed;
+            if (button_row("Reset To Defaults", armed ? "Confirm Reset" : "Reset"))
+            {
+                if (armed)
+                {
+                    config::reset_to_defaults( );
+                    this->m_config_reset_armed = false;
+                }
+                else
+                {
+                    this->m_config_reset_armed = true;
+                    this->m_config_reset_at = now;
+                }
+            }
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + reset_width);
+            ImGui::TextUnformatted(reset_help);
+            ImGui::PopTextWrapPos();
         });
     }
 

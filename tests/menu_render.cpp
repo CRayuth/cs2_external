@@ -175,7 +175,10 @@ int main(int argc, char** argv) {
                 render::hud::draw_spectator_list(true);
                 render::hud::draw_event_log(true);
                 render::hud::draw_keybind_list(true);
+                render::hud::draw_aimbot_status(true);
+                render::hud::draw_flash_status(true);
                 render::hud::draw_bomb_info(true);
+                render::hud::draw_plant_alert(true);
             }
             if(n%60==0)std::cout<<"LIVE frame="<<n<<" players="<<pose->players.size()<<std::endl;
         }

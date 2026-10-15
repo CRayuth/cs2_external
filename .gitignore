@@ -38,4 +38,7 @@ imgui.ini
 /legit.cfg
 
 # Local reverse-engineering captures are not part of the public source.
+/.tmp_baseproject/
+/ref_*/
+/.ref_*/
 /tests/frida/

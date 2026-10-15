@@ -2,6 +2,7 @@
 
 #include <scripting/runtime.hpp>
 #include <scripting/radar_asset.hpp>
+#include <scripting/script_contract.hpp>
 
 #include <app/workers.hpp>
 #include <core/input/bindings.hpp>
@@ -26,12 +27,6 @@ namespace scripting {
 	using clock = std::chrono::steady_clock;
 
 	namespace {
-
-		constexpr std::size_t k_memory_limit = 64u * 1024u * 1024u;
-		constexpr std::size_t k_draw_limit = 8192;
-		constexpr std::size_t k_ui_limit = 512;
-		constexpr auto k_tick_period = std::chrono::milliseconds( 16 );
-		constexpr auto k_reload_probe_period = std::chrono::milliseconds( 250 );
 
 		std::string path_utf8( const std::filesystem::path& path )
 		{
@@ -614,7 +609,7 @@ namespace scripting {
 	{
 		auto* script = self( state );
 		if ( script && clock::now( ) > script->callback_deadline )
-			luaL_error( state, "Vesta Lua callback exceeded its execution budget" );
+			luaL_error( state, "YUT Lua callback exceeded its execution budget" );
 	}
 
 	void runtime_t::implementation::script_instance::set_error(
@@ -754,7 +749,7 @@ namespace scripting {
 	{
 		if ( !lua ) return false;
 		const auto begin = clock::now( );
-		callback_deadline = begin + std::chrono::milliseconds( 8 );
+		callback_deadline = begin + k_callback_budget;
 		lua_sethook( lua, hook, LUA_MASKCOUNT, 10000 );
 		const auto result = lua_pcall( lua, arguments, 0, 0 );
 		lua_sethook( lua, nullptr, 0, 0 );
@@ -932,8 +927,9 @@ namespace scripting {
 	{
 		::SetThreadPriority( ::GetCurrentThread( ), THREAD_PRIORITY_BELOW_NORMAL );
 		try { write_time = std::filesystem::last_write_time( path ); } catch ( ... ) {}
-		if ( create_state( ) ) emit( "load" );
+		create_state( );
 		auto next_tick = clock::now( );
+		tick_delta delta{ next_tick };
 		auto next_probe = next_tick + k_reload_probe_period;
 		while ( !stop.stop_requested( ) && enabled.load( std::memory_order_acquire ) )
 		{
@@ -955,7 +951,8 @@ namespace scripting {
 			}
 			if ( lua && state.load( std::memory_order_acquire ) == script_state::running )
 			{
-				emit( "tick", []( lua_State* target ) { lua_pushnumber( target, 0.016 ); } );
+				const auto seconds = delta.advance( now );
+				emit( "tick", [ seconds ]( lua_State* target ) { lua_pushnumber( target, seconds ); } );
 				const auto current = owner.current_frame.load( std::memory_order_acquire );
 				if ( current && current->sequence != observed_frame ) dispatch_frame( current );
 				const auto config = owner.config_revision.load( std::memory_order_acquire );
@@ -2230,13 +2227,13 @@ namespace scripting {
 		if ( extension != L".png" && extension != L".jpg" && extension != L".jpeg" && extension != L".bmp" )
 			{ lua_pushnil( state ); lua_pushliteral( state, "unsupported texture format" ); return 2; }
 		const auto bytes = std::filesystem::file_size( target, error );
-		if ( error || bytes > 16u * 1024u * 1024u )
+		if ( error || bytes > k_texture_max_bytes )
 			{ lua_pushnil( state ); lua_pushliteral( state, "texture exceeds 16 MiB" ); return 2; }
 		const auto path_text = path_utf8( target );
 		const auto key = script->id + ":" + std::to_string( std::hash<std::string>{}( path_text ) );
 		{
 			std::scoped_lock lock( script->owner.textures_mutex );
-			if ( script->owner.textures.size( ) >= 64 && !script->owner.textures.contains( key ) )
+			if ( script->owner.textures.size( ) >= k_texture_limit && !script->owner.textures.contains( key ) )
 				{ lua_pushnil( state ); lua_pushliteral( state, "texture limit exceeded" ); return 2; }
 			script->owner.textures.try_emplace( key,
 				runtime_t::implementation::texture_entry{ target } );
@@ -2262,8 +2259,8 @@ namespace scripting {
 		auto& command = add_draw( state, draw_kind::panel );
 		command.a = { static_cast<float>( luaL_checknumber( state, 1 ) ),
 			static_cast<float>( luaL_checknumber( state, 2 ) ), 0.0f };
-		command.width = std::max( 80.0f, static_cast<float>( luaL_checknumber( state, 3 ) ) );
-		command.height = std::max( 36.0f, static_cast<float>( luaL_checknumber( state, 4 ) ) );
+		command.width = std::max( k_panel_min_width, static_cast<float>( luaL_checknumber( state, 3 ) ) );
+		command.height = std::max( k_panel_min_height, static_cast<float>( luaL_checknumber( state, 4 ) ) );
 		size_t length{};
 		const auto* title = luaL_checklstring( state, 5, &length );
 		command.text.assign( title, length );
@@ -2444,7 +2441,7 @@ namespace scripting {
 				{ cleanup( ); return; }
 			UINT width{}, height{};
 			if ( FAILED( converter->GetSize( &width, &height ) ) || !width || !height
-				|| width > 4096 || height > 4096 ) { cleanup( ); return; }
+				|| width > k_texture_max_edge || height > k_texture_max_edge ) { cleanup( ); return; }
 			const auto pitch = width * 4u;
 			std::vector<std::uint8_t> pixels( static_cast<std::size_t>( pitch ) * height );
 			if ( FAILED( converter->CopyPixels( nullptr, pitch,
@@ -2776,7 +2773,7 @@ namespace scripting {
 		}
 		if ( config_changed || ( config_requested
 			&& ( m_impl->last_config_publish == clock::time_point{}
-				|| now - m_impl->last_config_publish >= std::chrono::milliseconds( 100 ) ) ) )
+				|| now - m_impl->last_config_publish >= k_config_publish_period ) ) )
 		{
 			m_impl->last_config_publish = now;
 			m_impl->config_snapshot.store(

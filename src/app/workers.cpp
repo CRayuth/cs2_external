@@ -9,6 +9,8 @@
 #include <features/aimbot/aimbot.hpp>
 #include <features/misc/misc.hpp>
 #include <features/misc/auto_stop.hpp>
+#include <features/misc/anti_flash.hpp>
+#include <features/misc/flash_watch.hpp>
 #include <features/trigger/seed_trigger.hpp>
 #include <simulation/shot_state.hpp>
 #include <simulation/seed_schedule.hpp>
@@ -468,6 +470,14 @@ namespace app::workers {
 				{
 					VESTA_PERF_SCOPE( auto_stop_tick );
 					features::misc::auto_stop( ).tick( );
+				}
+				{
+					VESTA_PERF_SCOPE( flash_watch_tick );
+					features::misc::flash_watch( ).tick( );
+				}
+				{
+					VESTA_PERF_SCOPE( anti_flash_tick );
+					features::misc::anti_flash( ).tick( );
 				}
 			}
 			const auto snapshot = config::get_runtime_snapshot( );

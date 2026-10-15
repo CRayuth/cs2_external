@@ -32,9 +32,11 @@ The following calls are available inside `frame`:
 - `load_texture`, `image` for local PNG/JPEG/BMP files;
 - `panel` for a separate styled overlay information panel.
 
-Colors use four RGBA channels in the `0..255` range. World commands are
-projected with the current camera matrix on the render thread, so camera motion
-does not receive an extra Lua frame of delay.
+Colors use four RGBA channels in the `0..255` range. `line`, `rect`, and `circle`
+use the optional `thickness`; `filled_rect` and `filled_circle` accept the same
+argument slot but ignore it. `panel` clamps its size to a minimum of 80×36
+pixels. World commands are projected with the current camera matrix on the
+render thread, so camera motion does not receive an extra Lua frame of delay.
 
 ```lua
 vesta.events.on("frame", function(frame)
@@ -51,7 +53,8 @@ vesta.draw.panel(24, 180, 220, 90, "Web radar", 128, 90, 255, 255)
 vesta.draw.text(34, 216, "Helper: connected", 210, 212, 220, 255)
 ```
 
-Textures must be inside the active script directory. They are limited to
+Textures must be inside the active script directory, including its subfolders;
+paths that leave the directory are rejected. They are limited to
 4096×4096, 16 MiB per file, and 64 resources per runtime. Decode and D3D11
 resource creation are lazy; Lua receives only an opaque id.
 

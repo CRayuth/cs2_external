@@ -39,5 +39,6 @@ inline void publish_runtime_snapshot( )
 nlohmann::json build_config_json( );
 void apply_config_json( const nlohmann::json& document );
 bool apply_default_config( );
+void reset_to_defaults( );
 
 } // namespace config

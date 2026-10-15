@@ -7,6 +7,11 @@ The files under `examples/` cover the runtime's manual integration checks:
 - `over-budget.lua` — an endless callback is interrupted by the 8 ms budget hook;
 - `texture-smoke.lua` — the local WIC/D3D11 texture pipeline.
 
+The automated CTest `lua_runtime_contract` compares the documented API surface,
+event names, snapshot fields, lifecycle invariants, and limit values against
+`src/scripting/runtime.cpp` and `src/scripting/script_contract.hpp` without
+starting the game.
+
 Suggested sequence:
 
 1. Start `smoke.lua` with autoload and confirm that `ticks` increases.

@@ -1,8 +1,8 @@
 {
   "id": "vesta_web_radar",
-  "name": "Vesta Web Radar",
+  "name": "YUT Web Radar",
   "version": "1.0.0",
-  "author": "Vesta",
+  "author": "YUT",
   "description": "Opt-in private web radar with a local server and temporary tunnel",
   "api_version": 1,
   "entry": "main.lua"

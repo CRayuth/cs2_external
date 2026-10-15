@@ -211,6 +211,7 @@ namespace config {
 				style ping_style{ { 98, 217, 109, 255 }, 1.0f };
 				style distance_style{ { 130, 130, 145, 255 }, 1.0f };
 				style bomb_damage_style{ { 255, 120, 120, 255 }, 1.0f };
+				bool flash_countdown{ true };
 				[[nodiscard]] bool has( flag f ) const { return this->flags & f; }
 			} m_info_flags{};
 
@@ -284,6 +285,13 @@ namespace config {
 			zdraw::rgba timer_text_color{ 255, 220, 100, 255 };
 			bool show_info_panel{ true };
 			zdraw::rgba panel_background{ 12, 13, 18, 225 };
+			bool defuse_alert{ false };
+			bool defuse_alert_sound{ false };
+			
+			bool plant_alert{ false };
+			zdraw::rgba plant_color_ok{ 0, 180, 0, 255 };
+			zdraw::rgba plant_color_fail{ 255, 45, 45, 255 };
+			zdraw::rgba plant_color_unknown{ 235, 235, 240, 255 };
 
 			// The safe-zone contour is derived from the baked blast-damage map.
 			bool show_safe_zone{ true };
@@ -296,6 +304,7 @@ namespace config {
 		struct no_flash
 		{
 			bool enabled{ true };
+			bool anti_flash{ true };
 			float max_distance{ 1000.0f };
 			zdraw::rgba background_color{ 0, 0, 0, 255 };
 			zdraw::rgba wireframe_color{ 200, 200, 200, 150 };
@@ -397,6 +406,8 @@ namespace config {
 
 			bool occlude_dynamic_doors{ true };
 			bool occlude_smoke{ true };
+			bool smooth_transition{ false };
+			float transition_time{ 0.14f };
 
 			material visible{
 				.enabled = true,

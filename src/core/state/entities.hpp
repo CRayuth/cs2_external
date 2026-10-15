@@ -79,6 +79,7 @@ struct player_snapshot
 	bool is_defusing{};
 	bool is_ducked{};
 	bool is_flashed{};
+	float flash_remaining{};
 	bool is_visible{};
 	bool is_spotted{};
 	bool legit_visible{ true };

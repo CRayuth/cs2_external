@@ -715,6 +715,17 @@ void draw_nav_icon(ImDrawList *draw, int icon, ImVec2 center, ImU32 color)
         draw->PathStroke(color, ImDrawFlags_Closed, 1.65f);
         draw->AddCircle(center, 3.1f, color, 24, 1.65f);
     }
+    else if (icon == 4)
+    {
+        draw->PathClear();
+        draw->PathLineTo(svg_point(center, 12, 3));
+        draw->PathBezierCubicCurveTo(svg_point(center, 19, 11), svg_point(center, 18, 19.5f),
+                                     svg_point(center, 12, 19.5f), 16);
+        draw->PathBezierCubicCurveTo(svg_point(center, 6, 19.5f), svg_point(center, 5, 11),
+                                     svg_point(center, 12, 3), 16);
+        draw->PathStroke(color, ImDrawFlags_Closed, 1.65f);
+        draw->AddCircleFilled(svg_point(center, 12, 14), 1.7f, color, 16);
+    }
     else
     {
         constexpr std::array<ImVec2, 4> cells{ImVec2{4.0f, 4.0f}, ImVec2{13.0f, 4.0f}, ImVec2{4.0f, 13.0f},

@@ -92,10 +92,13 @@ namespace
 			|| visuals.m_crosshair.enabled
 			|| ( visuals.m_player.enabled && visuals.m_chams.enabled )
 			|| visuals.m_radar.enabled
+			|| ( visuals.m_bomb.enabled && visuals.m_bomb.plant_alert )
 			|| visuals.m_sound.enabled || misc.m_grenades.enabled
 			|| misc.m_nade_helper.enabled || misc.m_watermark.enabled
 			|| misc.m_spectator_list.enabled || misc.m_event_log.enabled
-			|| misc.m_keybind_list.enabled || misc.m_bullet_tracers.enabled || misc.m_hitmarker.enabled
+			|| misc.m_keybind_list.enabled || misc.m_aimbot_status.enabled
+			|| misc.m_flash_status.enabled
+			|| misc.m_bullet_tracers.enabled || misc.m_hitmarker.enabled
 			|| misc.m_hitsound.enabled || misc.m_hitsound.show_damage
 			|| ( combat.aimbot_enabled && combat.aimbot_draw_fov )
 			|| combat.penetration_crosshair;
@@ -710,7 +713,10 @@ bool overlay_t::run()
 			{
 				render::hud::draw_event_log(app::context().menu.is_open());
 				render::hud::draw_keybind_list(app::context().menu.is_open());
+				render::hud::draw_aimbot_status(app::context().menu.is_open());
+				render::hud::draw_flash_status(app::context().menu.is_open());
 				render::hud::draw_bomb_info(app::context().menu.is_open());
+				render::hud::draw_plant_alert(app::context().menu.is_open());
 			}
 		}
 
@@ -1398,10 +1404,10 @@ void overlay_t::request_config_load()
 			OPENFILENAMEW ofn{};
 			ofn.lStructSize = sizeof(ofn);
 			ofn.hwndOwner = this->m_hwnd;
-			ofn.lpstrFilter = L"vesta config (*.cfg)\0*.cfg\0All files (*.*)\0*.*\0";
+			ofn.lpstrFilter = L"YUT config (*.cfg)\0*.cfg\0All files (*.*)\0*.*\0";
 			ofn.lpstrFile = path;
 			ofn.nMaxFile = MAX_PATH;
-			ofn.lpstrTitle = L"Load vesta config";
+			ofn.lpstrTitle = L"Load YUT config";
 			ofn.lCustData = reinterpret_cast<LPARAM>( this );
 			ofn.lpfnHook = &overlay_t::config_dialog_hook;
 			ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR
@@ -1454,7 +1460,7 @@ void overlay_t::request_lua_import()
 		ofn.lpstrFilter = L"Lua scripts (*.lua)\0*.lua\0";
 		ofn.lpstrFile = path;
 		ofn.nMaxFile = static_cast<DWORD>( std::size( path ) );
-		ofn.lpstrTitle = L"Import Lua script into Vesta";
+		ofn.lpstrTitle = L"Import Lua script into YUT";
 		ofn.lpstrDefExt = L"lua";
 		ofn.lCustData = reinterpret_cast<LPARAM>( this );
 		ofn.lpfnHook = &overlay_t::config_dialog_hook;
@@ -1508,10 +1514,10 @@ void overlay_t::request_config_save()
 			OPENFILENAMEW ofn{};
 			ofn.lStructSize = sizeof(ofn);
 			ofn.hwndOwner = this->m_hwnd;
-			ofn.lpstrFilter = L"vesta config (*.cfg)\0*.cfg\0All files (*.*)\0*.*\0";
+			ofn.lpstrFilter = L"YUT config (*.cfg)\0*.cfg\0All files (*.*)\0*.*\0";
 			ofn.lpstrFile = path;
 			ofn.nMaxFile = MAX_PATH;
-			ofn.lpstrTitle = L"Save vesta config";
+			ofn.lpstrTitle = L"Save YUT config";
 			ofn.lpstrDefExt = L"cfg";
 			ofn.lCustData = reinterpret_cast<LPARAM>( this );
 			ofn.lpfnHook = &overlay_t::config_dialog_hook;

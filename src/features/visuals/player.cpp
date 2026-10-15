@@ -1,6 +1,7 @@
 #include <stdafx.hpp>
 #include <render/chams/renderer.hpp>
 #include <features/visuals/visuals.hpp>
+#include <simulation/flash_model.hpp>
 
 namespace features::visuals {
 	namespace {
@@ -940,14 +941,15 @@ namespace features::visuals {
 			std::string text;
 			const info_flags::style* style{};
 			status_icon icon{};
+			std::string suffix{};
 		};
 		std::array<status_line, 9> lines{};
 		std::size_t line_count{};
 		const auto append = [ & ]( bool visible, std::string text,
-			const info_flags::style& style, status_icon icon )
+			const info_flags::style& style, status_icon icon, std::string suffix = std::string{ } )
 		{
 			if ( visible && line_count < lines.size( ) )
-				lines[ line_count++ ] = { std::move( text ), &style, icon };
+				lines[ line_count++ ] = { std::move( text ), &style, icon, std::move( suffix ) };
 		};
 		const auto& flags = cfg.m_info_flags;
 
@@ -984,8 +986,12 @@ namespace features::visuals {
 		// textual status regardless of which subset is currently enabled.
 		append( flags.has( flag::kit ) && player.has_defuser, "kit",
 			flags.kit_style, status_icon::kit );
+		std::string flash_suffix{};
+		if ( flags.has( flag::flashed ) && flags.flash_countdown
+			&& simulation::flash::has_countdown( player.flash_remaining ) )
+			flash_suffix = std::format( "{:.1f}s", player.flash_remaining );
 		append( flags.has( flag::flashed ) && player.is_flashed, "flashed",
-			flags.flashed_style, status_icon::flashed );
+			flags.flashed_style, status_icon::flashed, std::move( flash_suffix ) );
 
 		for ( std::size_t line_index{}; line_index < line_count; ++line_index )
 		{
@@ -1015,15 +1021,26 @@ namespace features::visuals {
 				auto flash_font = *icon_font;
 				flash_font.font_size = 15.0f * layout.scale * line.style->scale;
 				// 'i' is the flashbang glyph in the bundled CS weapon font.
+				const auto glyph = zdraw::measure_text( "i", &flash_font );
 				draw_list.add_text( x, y, "i", &flash_font, line.style->color,
 					zdraw::text_style::outlined );
-				y += zdraw::measure_text( "i", &flash_font ).second;
+				if ( !line.suffix.empty( ) )
+				{
+					const auto suffix = zdraw::measure_text( line.suffix, &line_font );
+					draw_list.add_text( x + glyph.first + 2.0f * layout.scale,
+						y + ( glyph.second - suffix.second ) * 0.5f, line.suffix, &line_font,
+						line.style->color, zdraw::text_style::outlined );
+				}
+				y += glyph.second;
 			}
 			else
 			{
-				draw_list.add_text( x, y, line.text, &line_font, line.style->color,
+				const auto label = line.suffix.empty( )
+					? line.text
+					: line.text + " " + line.suffix;
+				draw_list.add_text( x, y, label, &line_font, line.style->color,
 					zdraw::text_style::outlined );
-				y += zdraw::measure_text( line.text, &line_font ).second;
+				y += zdraw::measure_text( label, &line_font ).second;
 			}
 		}
 		if ( player.invulnerable )

@@ -1,5 +1,6 @@
 #include <stdafx.hpp>
 #include <features/visuals/visuals.hpp>
+#include <features/visuals/hitsound.hpp>
 #include <app/workers.hpp>
 
 namespace features::visuals {
@@ -19,11 +20,17 @@ namespace features::visuals {
 				config::visual_profile::player::info_flags::flag::bomb_damage );
 		const auto script_requested = game::world().script_demand(
 			game::script_data_demand::bomb );
+		const auto plant_requested = cfg.enabled && cfg.plant_alert;
 		const auto active_requested = script_requested
-			|| ( cfg.enabled && cfg.show_active_bomb );
+			|| ( cfg.enabled && ( cfg.show_active_bomb || plant_requested ) );
 		const auto planted_requested = script_requested || player_damage_requested
 			|| ( cfg.enabled && ( cfg.show_planted_bomb
-				|| cfg.show_info_panel || cfg.show_safe_zone ) );
+				|| cfg.show_info_panel || cfg.show_safe_zone || cfg.defuse_alert ) );
+
+		auto plant = plant_alert_sample{ };
+		auto player_resource = std::uintptr_t{ };
+		auto game_rules = std::uintptr_t{ };
+		const auto local_weapon = game::local_player( ).weapon( );
 
 		if ( current_time > 0.0f && ( active_requested || planted_requested ) )
 		{
@@ -42,6 +49,25 @@ namespace features::visuals {
 						active.valid = active.position.length_sqr( ) > 1.0f;
 					}
 				}
+
+				if ( plant_requested && !plant.planting
+					&& entry.schema_id == "C_C4"_id && entry.ptr == local_weapon )
+				{
+					plant.planting = app::context().process.load<bool>( entry.ptr
+						+ SCHEMA( "C_C4", "m_bStartedArming"_id ) );
+					plant.armed_end_time = app::context().process.load<float>( entry.ptr
+						+ SCHEMA( "C_C4", "m_fArmedTime"_id ) );
+					plant.current_time = current_time;
+				}
+
+				if ( plant_requested && !player_resource
+					&& entry.schema_id == "C_CSPlayerResource"_id )
+					player_resource = entry.ptr;
+
+				if ( plant_requested && !game_rules
+					&& entry.schema_id == "C_CSGameRulesProxy"_id )
+					game_rules = app::context().process.load<std::uintptr_t>( entry.ptr
+						+ SCHEMA( "C_CSGameRulesProxy", "m_pGameRules"_id ) );
 
 				if ( planted_requested && !planted.planted
 					&& entry.schema_id == "C_PlantedC4"_id
@@ -70,6 +96,39 @@ namespace features::visuals {
 					planted.bomb_site = app::context().process.load<std::int32_t>( entry.ptr
 						+ SCHEMA( "C_PlantedC4", "m_nBombSite"_id ) );
 				}
+			}
+		}
+
+		if ( plant.planting )
+		{
+			const auto center_a_offset = SCHEMA( "C_CSPlayerResource", "m_bombsiteCenterA"_id );
+			const auto center_b_offset = SCHEMA( "C_CSPlayerResource", "m_bombsiteCenterB"_id );
+			if ( player_resource && center_a_offset > 0 && center_b_offset > 0 && active.valid )
+			{
+				const auto center_a = app::context().process.load<foundation::vec3>(
+					player_resource + center_a_offset );
+				const auto center_b = app::context().process.load<foundation::vec3>(
+					player_resource + center_b_offset );
+				if ( center_a.length_sqr( ) > 1.0f && center_b.length_sqr( ) > 1.0f )
+				{
+					plant.has_site = true;
+					plant.site = active.position.distance_sqr( center_a )
+						<= active.position.distance_sqr( center_b ) ? 0 : 1;
+				}
+			}
+
+			const auto round_start_offset = SCHEMA( "C_CSGameRules", "m_fRoundStartTime"_id );
+			const auto round_length_offset = SCHEMA( "C_CSGameRules", "m_iRoundTime"_id );
+			const auto round_status_offset = SCHEMA( "C_CSGameRules", "m_iRoundWinStatus"_id );
+			if ( game_rules && round_start_offset > 0 && round_length_offset > 0
+				&& round_status_offset > 0 )
+			{
+				plant.round_start_time = app::context().process.load<float>(
+					game_rules + round_start_offset );
+				plant.round_length = app::context().process.load<int>(
+					game_rules + round_length_offset );
+				plant.round_over = app::context().process.load<int>(
+					game_rules + round_status_offset ) != 0;
 			}
 		}
 
@@ -103,9 +162,34 @@ namespace features::visuals {
 			}
 		}
 
+		if ( planted.planted && cfg.defuse_alert )
+		{
+			const auto local_pawn = game::local_player( ).view_pawn( );
+			const auto item_services = local_pawn
+				? app::context().process.load<std::uintptr_t>( local_pawn
+					+ SCHEMA( "C_BasePlayerPawn", "m_pItemServices"_id ) ) : std::uintptr_t{};
+			if ( item_services )
+				planted.defuse_kit_state = app::context().process.load<bool>( item_services
+					+ SCHEMA( "CCSPlayer_ItemServices", "m_bHasDefuser"_id ) ) ? 2 : 1;
+			planted.defuse_need = planted.defuse_kit_state == 2 ? 5.0f : 10.0f;
+			planted.defuse_verdict_valid = game::local_player( ).alive( )
+				&& game::local_player( ).team( ) == 3;
+			const auto remaining = std::max( 0.0f, planted.blow_time - current_time );
+			if ( planted.defuse_verdict_valid )
+				planted.defuse_verdict = remaining >= planted.defuse_need ? 1
+					: remaining >= planted.defuse_need * 0.5f ? 2 : 3;
+			static thread_local int reported_verdict{};
+			if ( cfg.defuse_alert_sound && planted.defuse_verdict == 2
+				&& reported_verdict != 2 )
+				features::visuals::hitsounds( ).play( 3, 0.85f );
+			reported_verdict = planted.defuse_verdict;
+		}
+
 		std::unique_lock lock( this->m_state_mutex );
 		this->m_sampled_planted = planted;
 		this->m_sampled_active = active;
+		this->m_sampled_plant = plant;
+		this->m_sampled_plant_at = std::chrono::steady_clock::now( );
 		this->m_sampled_game_time = current_time;
 		this->m_sampled_health = local_health;
 		this->m_sampled_at = std::chrono::steady_clock::now( );
@@ -223,6 +307,10 @@ namespace features::visuals {
 		result.defuse_success = data.being_defused
 			&& data.defuse_countdown < data.blow_time;
 		result.bomb_site = data.bomb_site;
+		result.defuse_verdict_valid = data.defuse_verdict_valid;
+		result.defuse_verdict = data.defuse_verdict;
+		result.defuse_need = data.defuse_need;
+		result.defuse_kit_state = data.defuse_kit_state;
 		result.predicted_damage = data.predicted_damage;
 		result.local_health = local_health;
 		result.position = data.position;
@@ -239,6 +327,22 @@ namespace features::visuals {
 			this->m_sampled_planted.blow_time,
 			this->m_sampled_planted.baked_site,
 		};
+	}
+
+	plant_alert_state bomb_t::plant_snapshot( ) const
+	{
+		auto sample = plant_alert_sample{ };
+		auto sampled_at = std::chrono::steady_clock::time_point{ };
+		{
+			std::shared_lock lock( this->m_state_mutex );
+			sample = this->m_sampled_plant;
+			sampled_at = this->m_sampled_plant_at;
+		}
+		if ( !sample.planting )
+			return { };
+		sample.current_time += std::chrono::duration<float>(
+			std::chrono::steady_clock::now( ) - sampled_at ).count( );
+		return evaluate_plant_alert( sample );
 	}
 
 	void bomb_t::draw_planted_bomb( zdraw::draw_list& draw_list, const bomb_data& data, const config::visual_profile::bomb& cfg, float current_time ) const

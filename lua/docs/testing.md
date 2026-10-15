@@ -8,6 +8,11 @@
 - `over-budget.lua` — бесконечный callback прерывается 8 ms budget hook;
 - `texture-smoke.lua` — локальная WIC/D3D11 texture pipeline.
 
+Автотест CTest `lua_runtime_contract` сверяет задокументированный API, имена
+событий, поля snapshot, инварианты lifecycle и значения лимитов с
+`src/scripting/runtime.cpp` и `src/scripting/script_contract.hpp` без запуска
+игры.
+
 Проверенный сценарий:
 
 1. Запустить `smoke.lua` с autoload и убедиться, что `ticks` растёт.

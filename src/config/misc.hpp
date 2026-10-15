@@ -69,6 +69,9 @@ namespace config {
 			bool enabled{ true };
 			int style{ 4 }; // 0 soft, 1 glass, 2 pluck, 3 crisp, 4 flesh
 			float volume{ 0.55f };
+			bool kill_enabled{ true };
+			int kill_style{ 3 }; // 0 soft, 1 glass, 2 pluck, 3 crisp, 4 flesh
+			float kill_volume{ 0.8f };
 			bool show_damage{ true };
 			zdraw::rgba damage_color{ 255, 108, 112, 255 };
 			float damage_size{ 13.0f };
@@ -168,10 +171,31 @@ namespace config {
 			bool show_toggle{ true };
 		} m_keybind_list{};
 
+		struct aimbot_status
+		{
+			bool enabled{ true };
+			screen_layout layout{ 40.0f, 150.0f };
+			bool show_mode{ true };
+		} m_aimbot_status{};
+
+		struct flash_status
+		{
+			bool enabled{ true };
+			screen_layout layout{ 40.0f, 210.0f };
+			bool show_local{ true };
+			bool show_enemies{ true };
+			int max_enemies{ 3 };
+		} m_flash_status{};
+
 		struct bomb_info
 		{
 			screen_layout layout{ 40.0f, 200.0f };
 		} m_bomb_info{};
+
+		struct plant_alert
+		{
+			screen_layout layout{ 900.0f, 168.0f };
+		} m_plant_alert{};
 
 		struct bunny_hop
 		{

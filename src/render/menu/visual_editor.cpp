@@ -703,7 +703,20 @@ void menu_t::draw_visual_editor()
                                                                    glyph.data() + glyph.size());
                     draw->AddText(weapon_font, glyph_size, {start.x, current_y},
                                   packed(to_imvec(style->color)), glyph.data(), glyph.data() + glyph.size());
-                    max_width = std::max(max_width, extent.x);
+                    auto row_width = extent.x;
+                    if (info.flash_countdown)
+                    {
+                        constexpr std::string_view countdown{"2.1s"};
+                        const auto numeric = regular_font->CalcTextSizeA(
+                            size, FLT_MAX, 0.0f, countdown.data(), countdown.data() + countdown.size());
+                        draw->AddText(regular_font, size,
+                                      {start.x + extent.x + 2.0f * scale,
+                                       current_y + (extent.y - numeric.y) * 0.5f},
+                                      packed(to_imvec(style->color)), countdown.data(),
+                                      countdown.data() + countdown.size());
+                        row_width += 2.0f * scale + numeric.x;
+                    }
+                    max_width = std::max(max_width, row_width);
                     current_y += extent.y;
                 }
                 else

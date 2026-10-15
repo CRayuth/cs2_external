@@ -41,6 +41,7 @@ set(vesta_sources
     src/core/math/random.cpp
     src/core/math/vector.cpp
     src/core/memory/addresses.cpp
+    src/core/memory/offsets_dump.cpp
     src/core/memory/convars.cpp
     src/core/memory/compatibility.cpp
     src/core/memory/entities.cpp
@@ -87,9 +88,11 @@ set(vesta_sources
     src/features/visuals/projectile.cpp
     src/features/visuals/radar.cpp
     src/features/visuals/sound.cpp
+    src/features/misc/anti_flash.cpp
     src/features/misc/auto_accept.cpp
 	 src/features/misc/auto_stop.cpp
     src/features/misc/bhop.cpp
+    src/features/misc/flash_watch.cpp
     src/features/misc/nade_helper.cpp
 
     # render
@@ -254,6 +257,12 @@ endforeach()
 
 include(FetchContent)
 
+if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.31)
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.10)
+endif()
+
+set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
+
 FetchContent_Declare(
     lua
     URL https://www.lua.org/ftp/lua-5.4.8.tar.gz
@@ -315,12 +324,21 @@ target_link_libraries(${PROJECT_NAME} PRIVATE libzstd_static)
 target_include_directories(${PROJECT_NAME} PRIVATE ${zstd_SOURCE_DIR}/lib)
 
 include(CTest)
+find_package(Python COMPONENTS Interpreter QUIET)
 if(BUILD_TESTING)
-    foreach(test ray_capsule penetration_accuracy update_contracts)
+    foreach(test ray_capsule penetration_accuracy update_contracts plant_alert)
         add_executable(vesta_${test}_test tests/${test}.cpp)
         target_include_directories(vesta_${test}_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
         add_test(NAME ${test} COMMAND vesta_${test}_test)
     endforeach()
+    add_executable(vesta_offsets_dump_test tests/offsets_dump.cpp src/core/memory/offsets_dump.cpp src/system/storage.cpp)
+    target_include_directories(vesta_offsets_dump_test PRIVATE $<TARGET_PROPERTY:vesta,INCLUDE_DIRECTORIES>)
+    add_test(NAME offsets_dump COMMAND vesta_offsets_dump_test)
+    if(Python_Interpreter_FOUND)
+        add_test(NAME nade_data_reproducible
+                 COMMAND Python::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/analysis/export_nades_hpp.py check
+                 WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    endif()
     add_executable(vesta_shot_trace_test tests/shot_trace.cpp src/simulation/shot_trace.cpp)
     target_include_directories(vesta_shot_trace_test PRIVATE tests/fixtures/shot_trace src)
     target_compile_definitions(vesta_shot_trace_test PRIVATE VESTA_TRACE_RAY_TEST=1 VESTA_SHOT_TRACE_ENABLED=1)
@@ -391,7 +409,7 @@ if(BUILD_TESTING)
 		${CMAKE_CURRENT_SOURCE_DIR}/src)
 	add_test(NAME swept_hull COMMAND vesta_swept_hull_test)
 
-    foreach(test seed_receipt seed_epoch_guard shot_clock_evidence seed_reaction seed_weapon_guard entity_slot snapshot_epoch read_pair depth_bounds index_run object_watch chunked_read present_policy bvh_capacity snapshot_pool mesh_leaves latest_job seed_timing frame_schedule menu_geometry key_encoding input_lifecycle visual_geometry action_state manual_bindings render_latency)
+    foreach(test seed_receipt seed_epoch_guard shot_clock_evidence seed_reaction seed_weapon_guard entity_slot snapshot_epoch read_pair depth_bounds index_run object_watch chunked_read present_policy bvh_capacity snapshot_pool mesh_leaves latest_job seed_timing frame_schedule menu_geometry key_encoding input_lifecycle visual_geometry action_state manual_bindings render_latency anti_flash aimbot_status flash_model)
         add_executable(vesta_${test}_test tests/${test}.cpp)
         target_include_directories(vesta_${test}_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
         target_link_libraries(vesta_${test}_test PRIVATE user32)
@@ -412,6 +430,11 @@ if(BUILD_TESTING)
     add_executable(vesta_startup_contract_test tests/startup_contract.cpp)
     target_include_directories(vesta_startup_contract_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME startup_contract COMMAND vesta_startup_contract_test $<TARGET_FILE:vesta> ${VESTA_MANIFEST_LEVEL} ${VESTA_MANIFEST_UIACCESS})
+
+    add_executable(vesta_lua_runtime_contract_test tests/lua_runtime_contract.cpp)
+    target_include_directories(vesta_lua_runtime_contract_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME lua_runtime_contract COMMAND vesta_lua_runtime_contract_test "${CMAKE_CURRENT_SOURCE_DIR}")
+    set_tests_properties(lua_runtime_contract PROPERTIES LABELS "lua")
 
     add_executable(vesta_pacing_benchmark tests/frame_pacing_benchmark.cpp)
     target_include_directories(vesta_pacing_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

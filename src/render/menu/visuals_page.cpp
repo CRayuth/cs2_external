@@ -118,9 +118,12 @@ void menu_t::draw_visuals()
                                        chams_material_row_count(chams_cfg.on_shot.appearance),
                                        [&] { chams_material_rows(chams_cfg.on_shot.appearance); });
                 });
-                settings_popup_row("Occlusion", 2, [&] {
+                settings_popup_row("Occlusion", 3, [&] {
                     toggle_row("Dynamic Doors", chams_cfg.occlude_dynamic_doors);
                     toggle_row("Smoke Occlusion", chams_cfg.occlude_smoke);
+                    toggle_popup_row("Smooth Transition", chams_cfg.smooth_transition, 1, [&] {
+                        slider_row("Transition Time", chams_cfg.transition_time, 0.02f, 0.6f, "s", 0.01f);
+                    });
                 });
             });
             toggle_popup_row("Chams Visible", chams_cfg.visible.enabled,
@@ -217,7 +220,7 @@ void menu_t::draw_visuals()
     else if (this->m_visual_group == 3)
     {
         auto &p = config::visual_settings.m_bomb;
-        card("bomb_states", "STATES", 6, [&] {
+        card("bomb_states", "STATES", 7, [&] {
             toggle_row("Enable Bomb ESP", p.enabled);
             static constexpr const char *display_modes[]{"Indicator", "Text Only"};
             select_row("Display Mode", p.display_mode, display_modes);
@@ -229,9 +232,16 @@ void menu_t::draw_visuals()
             toggle_row(p.display_mode == config::visual_profile::bomb::text_only ? "World Timer"
                                                                                  : "World Timer Ring",
                        p.show_timer);
-            toggle_popup_row("Bomb Info Panel", p.show_info_panel, 2, [&] {
+            toggle_popup_row("Bomb Info Panel", p.show_info_panel, 4, [&] {
                 color_row("Timer Color", p.timer_text_color);
                 color_row("Panel Background", p.panel_background);
+                toggle_row("Defuse Alert", p.defuse_alert);
+                toggle_row("Defuse Alert Sound", p.defuse_alert_sound);
+            });
+            toggle_popup_row("Plant Alert", p.plant_alert, 3, [&] {
+                color_row("Plant Will Finish", p.plant_color_ok);
+                color_row("Plant Too Late", p.plant_color_fail);
+                color_row("Round Clock Unknown", p.plant_color_unknown);
             });
         });
         card("bomb_safe_zone", "SAFE ZONE (BAKED)", 1, [&] {
@@ -296,7 +306,7 @@ void menu_t::draw_visuals()
     else if (this->m_visual_group == 5)
     {
         auto &general = config::general_settings;
-        card("bullet_effects", "BULLET EFFECTS", 3, [&] {
+        card("bullet_effects", "BULLET EFFECTS", 4, [&] {
             auto &tracers = general.m_bullet_tracers;
             toggle_popup_row("Enable Bullet Tracers", tracers.enabled, 5, [&] {
                 settings_popup_row("Appearance", 3, [&] {
@@ -346,11 +356,25 @@ void menu_t::draw_visuals()
                     slider_row("Damage Rise", sound.damage_rise, 0.0f, 100.0f, "px", 1.0f);
                 });
             });
+            toggle_popup_row("Kill Sound", sound.kill_enabled, 3, [&] {
+                select_row("Kill Sound Style", sound.kill_style, hitsound_styles);
+                slider_percent_row("Kill Volume", sound.kill_volume);
+                if (button_row("Kill Preview", "Play"))
+                    features::visuals::hitsounds().play(sound.kill_style, sound.kill_volume);
+            });
         });
 
         auto &no_flash = config::visual_settings.m_no_flash;
-        card("no_flash", "NO FLASH (WIREFRAME)", 1, [&] {
-            toggle_popup_row("Enable Visual No Flash", no_flash.enabled, 3, [&] {
+        card("no_flash", "NO FLASH", 2, [&] {
+            static constexpr const char *flash_modes[]{"Off", "Visual Only", "Anti-Flash Only", "Both"};
+            const int derived = no_flash.enabled
+                ? (no_flash.anti_flash ? 3 : 1)
+                : (no_flash.anti_flash ? 2 : 0);
+            auto selected = derived;
+            select_row("Flash Protection", selected, flash_modes);
+            no_flash.enabled = selected == 1 || selected == 3;
+            no_flash.anti_flash = selected == 2 || selected == 3;
+            settings_popup_row("Visual Overlay Settings", 3, [&] {
                 slider_row("Render Distance", no_flash.max_distance, 200.0f, 3000.0f, "", 10.0f);
                 color_row("Dimming Overlay Color", no_flash.background_color);
                 color_row("Wireframe Color", no_flash.wireframe_color);

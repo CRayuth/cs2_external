@@ -17,7 +17,8 @@ vesta.config.patch({
 that is applied to the current configuration on the render/config thread. New
 paths and incompatible types are rejected. `snapshot()` returns a copy of the
 complete tree. `schema()` returns the same structure without values, using the
-types `object`, `array`, `boolean`, `integer`, `number`, and `string`.
+types `object`, `array`, `boolean`, `integer`, `number`, and `string`; a JSON
+null reports `null`, and an empty array reports `unknown` for its missing item.
 
 Address array entries with a numeric dotted segment, for example
 `combat_overrides.0.aimbot.enabled`.

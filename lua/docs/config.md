@@ -17,7 +17,8 @@ vesta.config.patch({
 очередь; она применяется к актуальному config на render/config thread. Новый путь
 или несовместимый тип отклоняется. `snapshot()` возвращает копию всего дерева.
 `schema()` возвращает такое же дерево без значений с типами `object`, `array`,
-`boolean`, `integer`, `number` и `string`.
+`boolean`, `integer`, `number`, `string`; JSON null даёт тип `null`, а пустой
+массив сообщает `unknown` для отсутствующего элемента.
 
 Индексы массивов указываются числом через точку, например
 `combat_overrides.0.aimbot.enabled`.

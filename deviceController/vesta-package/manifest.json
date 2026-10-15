@@ -1,0 +1,9 @@
+{
+  "id": "vesta_device_controller",
+  "name": "Vesta Device Controller",
+  "version": "1.0.0",
+  "author": "Vesta",
+  "description": "LAN web control bridge: exposes every vesta feature over the config API for an external browser panel.",
+  "api_version": 1,
+  "entry": "main.lua"
+}

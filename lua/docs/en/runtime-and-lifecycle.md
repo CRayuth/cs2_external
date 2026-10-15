@@ -9,10 +9,14 @@ presentation frame.
 
 ```lua
 vesta.events.on("load", function() end)
-vesta.events.on("tick", function(dt) end)       -- approximately 60 Hz
+vesta.events.on("tick", function(dt) end)       -- about 60 Hz
 vesta.events.on("frame", function(snapshot) end)
 vesta.events.on("unload", function() end)
 ```
+
+`tick` is scheduled every 16 ms and receives the measured wall-clock seconds
+since the previous tick, so a delayed or stalled script thread reports the real
+elapsed interval instead of a fixed value; the first tick reports `0`.
 
 `frame` uses latest-only semantics: a slow script never accumulates old frames.
 Hot Reload watches the entry file and restarts only the selected script. Keys
@@ -21,9 +25,9 @@ open, loss of game input, and Vesta shutdown.
 
 New source is compiled and executes its top level in a provisional VM first.
 Config and input side effects remain disabled until the replacement succeeds;
-`load` is delivered only after the atomic swap. If compilation fails, the active
-VM continues running and the error appears in the menu. The old state's `unload`
-callback runs exactly once.
+`load` is delivered only after the atomic swap and exactly once per started or
+reloaded state. If compilation fails, the active VM continues running and the
+error appears in the menu. The old state's `unload` callback runs exactly once.
 
 Per-script limits are 64 MiB of Lua heap, 8192 draw commands, 512 UI controls,
 and 8 ms for one Lua callback. Exceeding a limit is reported in the Lua API tab.

@@ -1,0 +1,10 @@
+{
+  "vesta_path": "d:\\cs2_c\\vesta\\build\\bin\\vesta.exe",
+  "host": "127.0.0.1",
+  "port": 8760,
+  "auto_launch": true,
+  "watch_interval_ms": 700,
+  "package_id": "vesta_device_controller",
+  "install_package": true,
+  "enable_autoload": true
+}

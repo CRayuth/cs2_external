@@ -1,6 +1,7 @@
 #include <stdafx.hpp>
 #include <app/context.hpp>
 #include <core/memory/compatibility.hpp>
+#include <core/memory/offsets_dump.hpp>
 #include <app/startup_stage.hpp>
 #include <app/workers.hpp>
 #include <simulation/seed_diagnostics.hpp>
@@ -61,9 +62,9 @@ int main(int argc, char** argv)
 	if (!ui_access::enabled())
 	{
 		::MessageBoxW(nullptr,
-		              L"Vesta requires the UIAccess token declared in its manifest. "
+		              L"YUT requires the UIAccess token declared in its manifest. "
 		              L"Install a trusted, signed build in Program Files.",
-		              L"Vesta installation", MB_OK | MB_ICONERROR);
+		              L"YUT installation", MB_OK | MB_ICONERROR);
 		return 1;
 	}
 	constexpr DWORD ui_access_result = ERROR_SUCCESS;
@@ -89,9 +90,9 @@ int main(int argc, char** argv)
 		if ( ui_access_result != ERROR_SUCCESS )
 		{
 			const auto message = std::format(
-                L"UIAccess initialization failed (Win32 {}). Vesta requires UIAccess for presentation.",
+                L"UIAccess initialization failed (Win32 {}). YUT requires UIAccess for presentation.",
                 ui_access_result );
-            ::MessageBoxW(nullptr, message.c_str(), L"Vesta startup", MB_OK | MB_ICONERROR);
+            ::MessageBoxW(nullptr, message.c_str(), L"YUT startup", MB_OK | MB_ICONERROR);
             return 1;
 		}
 	}
@@ -115,6 +116,18 @@ int main(int argc, char** argv)
 		if ( !app::context().modules.discover( app::context().process ) )
 		{
 			return 1;
+		}
+
+		if ( game::offsets( ).load( ) )
+		{
+			app::context().diagnostics.success(
+				"[offsets] community dump ready: {} client.dll global(s), build {}.",
+				game::offsets( ).entry_count( ), game::offsets( ).build_number( ) );
+		}
+		else
+		{
+			app::context().diagnostics.info(
+				"[offsets] dump fallback unavailable: {}", game::offsets( ).status_text( ) );
 		}
 
 		if ( !app::context().addresses.initialize( ) )

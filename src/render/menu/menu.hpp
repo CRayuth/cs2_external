@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <chrono>
 
 class menu_t
 {
@@ -44,4 +45,6 @@ class menu_t
     int m_misc_group{};
     float m_content_animation{1.0f};
     float m_visual_editor_animation{};
+    bool m_config_reset_armed{};
+    std::chrono::steady_clock::time_point m_config_reset_at{};
 };
