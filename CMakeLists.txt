@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
 project(vesta VERSION 1.2.1 LANGUAGES C CXX)
 
+if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.31)
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+endif()
+
+set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
+
 # Lua (compiled as C) reports errors with longjmp through Vesta's C++ API functions. With /EHsc MSVC assumes that
 # extern "C" functions never throw and skips the destructors of those frames, leaving locks held and memory leaked;
 # /EHs keeps the unwind information so the longjmp destroys them like an exception would.
