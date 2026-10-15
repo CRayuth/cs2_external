@@ -5,6 +5,7 @@
 #include <game/state/services.hpp>
 #include <features/chams/renderer.hpp>
 #include <features/visuals/visuals.hpp>
+#include <simulation/flash_model.hpp>
 
 namespace features::visuals
 {
@@ -948,13 +949,16 @@ void player_t::paint_status_labels(render::draw::draw_list& draw_list, render::d
         std::string text;
         const info_flags::style* style{};
         status_icon icon{};
+        std::string suffix{};
     };
     std::array<status_line, 9> lines{};
     std::size_t line_count{};
-    const auto append = [&](bool visible, std::string text, const info_flags::style& style, status_icon icon)
+    const auto append =
+        [&](bool visible, std::string text, const info_flags::style& style, status_icon icon,
+            std::string suffix = std::string{})
     {
         if (visible && line_count < lines.size())
-            lines[line_count++] = {std::move(text), &style, icon};
+            lines[line_count++] = {std::move(text), &style, icon, std::move(suffix)};
     };
     const auto& flags = cfg.m_info_flags;
 
@@ -984,7 +988,11 @@ void player_t::paint_status_labels(render::draw::draw_list& draw_list, render::d
     // Icon flags are deliberately appended last so they always sit below every
     // textual status regardless of which subset is currently enabled.
     append(flags.has(flag::kit) && player.has_defuser, "kit", flags.kit_style, status_icon::kit);
-    append(flags.has(flag::flashed) && player.is_flashed, "flashed", flags.flashed_style, status_icon::flashed);
+    std::string flash_suffix{};
+    if (flags.has(flag::flashed) && flags.flash_countdown && simulation::flash::has_countdown(player.flash_remaining))
+        flash_suffix = std::format("{:.1f}s", player.flash_remaining);
+    append(flags.has(flag::flashed) && player.is_flashed, "flashed", flags.flashed_style, status_icon::flashed,
+           std::move(flash_suffix));
 
     for (std::size_t line_index{}; line_index < line_count; ++line_index)
     {
@@ -1012,13 +1020,21 @@ void player_t::paint_status_labels(render::draw::draw_list& draw_list, render::d
             auto flash_font = *icon_font;
             flash_font.font_size = 15.0f * layout.scale * line.style->scale;
             // 'i' is the flashbang glyph in the bundled CS weapon font.
+            const auto glyph = render::draw::measure_text("i", &flash_font);
             draw_list.add_text(x, y, "i", &flash_font, line.style->color, render::draw::text_style::outlined);
-            y += render::draw::measure_text("i", &flash_font).second;
+            if (!line.suffix.empty())
+            {
+                const auto suffix = render::draw::measure_text(line.suffix, &line_font);
+                draw_list.add_text(x + glyph.first + 2.0f * layout.scale, y + (glyph.second - suffix.second) * 0.5f,
+                                   line.suffix, &line_font, line.style->color, render::draw::text_style::outlined);
+            }
+            y += glyph.second;
         }
         else
         {
-            draw_list.add_text(x, y, line.text, &line_font, line.style->color, render::draw::text_style::outlined);
-            y += render::draw::measure_text(line.text, &line_font).second;
+            const auto label = line.suffix.empty() ? line.text : line.text + " " + line.suffix;
+            draw_list.add_text(x, y, label, &line_font, line.style->color, render::draw::text_style::outlined);
+            y += render::draw::measure_text(label, &line_font).second;
         }
     }
     if (player.invulnerable)

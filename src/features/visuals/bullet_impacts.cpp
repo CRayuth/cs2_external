@@ -652,7 +652,9 @@ void bullet_impacts_t::emit_confirmed_hit(const std::uintptr_t pawn, const found
             m_hitmarkers.erase(m_hitmarkers.begin());
     }
     const auto& feedback = m_config_snapshot->general.m_hitsound;
-    if (feedback.enabled)
+    if (killed && feedback.kill_enabled)
+        features::visuals::hitsounds().play(feedback.kill_style, feedback.kill_volume);
+    else if (feedback.enabled)
         features::visuals::hitsounds().play(feedback.style, feedback.volume);
     if (feedback.show_damage)
     {

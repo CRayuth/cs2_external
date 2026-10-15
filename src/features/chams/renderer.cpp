@@ -2483,6 +2483,70 @@ void renderer::render_world_effects(ID3D11RenderTargetView* backbuffer_rtv, cons
         render_wireframe(smoke_cfg.wireframe_color, 1.0f, 0.0f, true);
 }
 
+namespace
+{
+struct transition_state
+{
+    float value{};
+    std::chrono::steady_clock::time_point updated{};
+};
+
+[[nodiscard]] float advance_transition(std::unordered_map<std::uintptr_t, transition_state>& values,
+                                       const std::uintptr_t key, const float target, const float duration)
+{
+    if (!key)
+        return target;
+    const auto now = std::chrono::steady_clock::now();
+    const auto entry = values.find(key);
+    if (entry == values.end())
+    {
+        values.insert({key, transition_state{target, now}});
+        return target;
+    }
+    const auto delta = std::chrono::duration<float>(now - entry->second.updated).count();
+    entry->second.updated = now;
+    if (delta <= 0.0f)
+        return entry->second.value;
+    const auto blend = std::clamp(1.0f - std::exp(-delta / std::max(duration, 0.001f)), 0.0f, 1.0f);
+    entry->second.value = std::lerp(entry->second.value, target, blend);
+    if (std::abs(entry->second.value - target) < 0.002f)
+    {
+        values.erase(entry);
+        return target;
+    }
+    return entry->second.value;
+}
+
+void blend_toward(config::visual_profile::chams::material& target,
+                  const config::visual_profile::chams::material& source, const float amount)
+{
+    const auto channel = [amount](const std::uint8_t from, const std::uint8_t to)
+    {
+        return static_cast<std::uint8_t>(
+            std::lround(std::lerp(static_cast<float>(from), static_cast<float>(to), amount)));
+    };
+    const auto scalar = [amount](const float from, const float to)
+    {
+        return std::lerp(from, to, amount);
+    };
+    target.color.r = channel(target.color.r, source.color.r);
+    target.color.g = channel(target.color.g, source.color.g);
+    target.color.b = channel(target.color.b, source.color.b);
+    target.color.a = channel(target.color.a, source.color.a);
+    target.tint.r = channel(target.tint.r, source.tint.r);
+    target.tint.g = channel(target.tint.g, source.tint.g);
+    target.tint.b = channel(target.tint.b, source.tint.b);
+    target.tint.a = channel(target.tint.a, source.tint.a);
+    target.roughness = scalar(target.roughness, source.roughness);
+    target.metalness = scalar(target.metalness, source.metalness);
+    target.exponent = scalar(target.exponent, source.exponent);
+    target.falloff = scalar(target.falloff, source.falloff);
+    target.fresnel_fill = scalar(target.fresnel_fill, source.fresnel_fill);
+    target.strength = scalar(target.strength, source.strength);
+    target.speed = scalar(target.speed, source.speed);
+}
+} // namespace
+
 void renderer::render_frame(ID3D11RenderTargetView* backbuffer_rtv, const UINT target_width, const UINT target_height,
                             const std::shared_ptr<const game::player_pose_frame>& frame)
 {
@@ -2526,6 +2590,7 @@ void renderer::render_frame(ID3D11RenderTargetView* backbuffer_rtv, const UINT t
     auto& roster_identity = cache.roster_identity;
     auto& cached_counts = cache.counts;
     auto& cached_model_path = cache.model_path;
+    static thread_local std::unordered_map<std::uintptr_t, transition_state> transitions{};
 
     bool rebuild_drawables{};
     if (frame->world != roster_world)
@@ -2875,9 +2940,21 @@ void renderer::render_frame(ID3D11RenderTargetView* backbuffer_rtv, const UINT t
                     visible.tint = {176, 176, 184, visible.color.a};
                     invisible.tint = {112, 116, 128, invisible.color.a};
                 }
-                else if (smoke_occluded(d.current))
+                else
                 {
-                    visible = invisible;
+                    const auto occluded_target = smoke_occluded(d.current) ? 1.0f : 0.0f;
+                    auto blend = occluded_target;
+                    if (cfg.smooth_transition && cfg.transition_time > 0.001f)
+                        blend = advance_transition(transitions, d.current ? d.current->pawn : 0, occluded_target,
+                                                   cfg.transition_time);
+                    if (blend >= 0.999f)
+                        visible = invisible;
+                    else if (blend > 0.001f)
+                    {
+                        if (blend >= 0.5f)
+                            visible.type = invisible.type;
+                        blend_toward(visible, invisible, blend);
+                    }
                 }
                 scale_alpha(visible);
                 scale_alpha(invisible);
