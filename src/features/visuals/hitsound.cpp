@@ -3,6 +3,7 @@
 #include <resources/sounds/hitsounds.hpp>
 
 #include <xaudio2.h>
+#include <combaseapi.h>
 #include <condition_variable>
 #include <deque>
 
@@ -109,7 +110,13 @@ struct hitsound_player::implementation
 
     implementation()
     {
-        worker = std::thread([this] { run(); });
+        worker = std::thread(
+            [this]
+            {
+                ::CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+                run();
+                ::CoUninitialize();
+            });
     }
 
     ~implementation()
