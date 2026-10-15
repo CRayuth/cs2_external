@@ -712,6 +712,7 @@ void player_info_flag_settings_rows(config::visual_profile::player::info_flags& 
     auto& style = selected_info_flag_style(flags, selected);
     color_row("Color", style.color);
     slider_row("Scale", style.scale, 0.55f, 2.0f, "x", 0.05f);
+    toggle_row("Flashed Countdown", flags.flash_countdown);
 }
 
 void chams_material_rows(config::visual_profile::chams::material& m)

@@ -673,7 +673,7 @@ inline constexpr int k_bar_settings_rows = 7;
 
 inline constexpr int k_weapon_settings_rows = 4;
 
-inline constexpr int k_info_flag_settings_rows = 4;
+inline constexpr int k_info_flag_settings_rows = 5;
 
 void dock_player_bar(config::visual_profile::player::layout_element& layout, int dock);
 
