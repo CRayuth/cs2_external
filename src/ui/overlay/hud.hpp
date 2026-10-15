@@ -20,6 +20,9 @@ public:
     void draw_system_notices(bool interactive);
     void draw_keybind_list(bool interactive);
     void draw_bomb_info(bool interactive);
+    void draw_aimbot_status(bool interactive);
+    void draw_flash_status(bool interactive);
+    void draw_plant_alert(bool interactive);
 
 private:
     // Samplers, drag state and animation kept between frames.

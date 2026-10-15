@@ -7,10 +7,13 @@
 #include <game/state/services.hpp>
 #include <ui/presentation.hpp>
 #include <features/misc/auto_stop.hpp>
+#include <features/misc/anti_flash.hpp>
+#include <features/misc/flash_watch.hpp>
 #include <features/visuals/event_log.hpp>
 #include <features/visuals/visuals.hpp>
 #include <render/text/localization.hpp>
 #include <ui/overlay/hud.hpp>
+#include <ui/overlay/activation_status.hpp>
 #include <ui/overlay/overlay.hpp>
 #include <ui/overlay/system_notices.hpp>
 #include <resources/watermark_loss_icon.hpp>
@@ -29,7 +32,7 @@ constexpr ImU32 k_wm_text = IM_COL32(248, 248, 242, 255);
 constexpr ImU32 k_wm_muted = IM_COL32(150, 150, 160, 255);
 
 // Uppercase, matching the sidebar wordmark.
-constexpr const char* k_wm_brand = "VESTA";
+constexpr const char* k_wm_brand = "YUT";
 
 enum class stat_icon
 {
@@ -416,6 +419,9 @@ struct hud_state
     panel_drag events;
     panel_drag keybinds;
     panel_drag bomb;
+    panel_drag aimbot_status;
+    panel_drag flash;
+    panel_drag plant;
     ui::notices::dismissals closed_notices;
     std::uint64_t loading_serial{};
     std::chrono::steady_clock::time_point loading_since{};
@@ -1170,6 +1176,9 @@ void panels::draw_keybind_list(const bool interactive)
         rows.push_back({"Auto Stop  [active]", k_wm_text});
     if (cfg.show_always && config::visual_settings.m_no_flash.enabled)
         rows.push_back({"No Flash  [always]", k_wm_text});
+    if (cfg.show_always && config::visual_settings.m_no_flash.anti_flash)
+        rows.push_back({features::misc::anti_flash().armed() ? "No Flash  [pinned]" : "No Flash  [pin: no write]",
+                        k_wm_text});
     if (cfg.show_always && config::visual_settings.m_no_smoke.enabled)
         rows.push_back({"No Smoke  [always]", k_wm_text});
     draw_compact_panel(render::localization::tr("Active Binds"), rows, cfg.layout, m_state->keybinds, interactive);
@@ -1194,6 +1203,10 @@ void panels::draw_bomb_info(bool interactive)
         state.bomb_site = 0;
         state.predicted_damage = 124;
         state.local_health = 100;
+        state.defuse_verdict_valid = true;
+        state.defuse_verdict = 2;
+        state.defuse_need = 5.0f;
+        state.defuse_kit_state = 2;
     }
 
     const auto dpi_scale = overlay_dpi_scale();
@@ -1208,7 +1221,8 @@ void panels::draw_bomb_info(bool interactive)
     const auto text_size = label.size;
     auto* icon_font = resolve_font(fonts.weapons_15, 1.0f).font;
     const auto icon_size = 18.0f * user_scale;
-    const ImVec2 panel_size{238.0f * metric_scale, 86.0f * metric_scale};
+    const auto verdict_active = cfg.defuse_alert && state.defuse_verdict_valid;
+    const ImVec2 panel_size{238.0f * metric_scale, (verdict_active ? 108.0f : 86.0f) * metric_scale};
 
     const screen_ui_space ui_space{};
     const auto display = ui_space.display();
@@ -1302,7 +1316,253 @@ void panels::draw_bomb_info(bool interactive)
     draw_row(first_y, "Site:", site_value, bomb_u32);
     draw_row(first_y + line_height, "HP:", hp_value, hp_color);
     draw_row(first_y + line_height * 2.0f, "Time:", time_value, timer_color);
+    if (verdict_active && state.defuse_verdict != 0)
+    {
+        const char* verdict_label = "";
+        ImU32 verdict_color = k_wm_muted;
+        switch (state.defuse_verdict)
+        {
+        case 1:
+            verdict_label = "SAFE";
+            verdict_color = IM_COL32(110, 225, 135, 255);
+            break;
+        case 2:
+            verdict_label = "START NOW";
+            verdict_color = IM_COL32(255, 200, 60, 255);
+            break;
+        case 3:
+            verdict_label = "TOO LATE";
+            verdict_color = IM_COL32(238, 68, 68, 255);
+            break;
+        default:
+            break;
+        }
+        const char* kit_label =
+            state.defuse_kit_state == 2 ? "kit" : state.defuse_kit_state == 1 ? "no kit" : "kit?";
+        const auto verdict_value = std::format("{} ({:.0f}s, {})", verdict_label, state.defuse_need, kit_label);
+        draw_row(first_y + line_height * 3.0f, "Defuse:", verdict_value, verdict_color);
+    }
     draw->PopClipRect();
+}
+
+void panels::draw_aimbot_status(const bool interactive)
+{
+    auto& cfg = config::general_settings.m_aimbot_status;
+    if (!cfg.enabled)
+        return;
+    const auto combat = config::combat_settings.get(game::local_player().weapon_type());
+    const auto& aim = combat.aimbot;
+    if (!aim.enabled && !interactive)
+        return;
+    const auto active = aim.enabled && config::combat_profile::activation_active(aim.activation_mode, aim.key);
+
+    constexpr float k_flash_ms = 280.0f;
+    const auto now = std::chrono::steady_clock::now();
+    static activation_tracked_state tracked{};
+    tracked.observe(active, now);
+    const auto flash = tracked.flash(now, k_flash_ms);
+
+    cfg.layout.scale = std::clamp(cfg.layout.scale, 0.55f, 2.0f);
+    const auto dpi = overlay_dpi_scale();
+    const auto metric = dpi * cfg.layout.scale;
+    const auto text_style = resolve_font(render::fonts().menu_semibold_13, cfg.layout.scale);
+    auto* text_font = text_style.font;
+    const auto text_size = text_style.size;
+    const auto tag_style = resolve_font(render::fonts().menu_regular_12, cfg.layout.scale);
+    auto* tag_font = tag_style.font;
+    const auto tag_size = tag_style.size;
+    const auto width_of = [](ImFont* font, float size, const char* value)
+    { return font->CalcTextSizeA(size, FLT_MAX, 0.0f, value).x; };
+    const auto blend = [](const ImU32 from, const ImU32 to, const float u)
+    {
+        const auto channel = [&](const int shift)
+        {
+            const auto a = static_cast<float>((from >> shift) & 0xffu);
+            const auto b = static_cast<float>((to >> shift) & 0xffu);
+            return static_cast<ImU32>(std::lround(a + (b - a) * u)) & 0xffu;
+        };
+        return channel(0) | (channel(8) << 8) | (channel(16) << 16) | (channel(24) << 24);
+    };
+
+    char label[48];
+    std::snprintf(label, sizeof(label), "%s  %s", render::localization::tr("Aimbot"),
+                  active ? render::localization::tr("ON") : render::localization::tr("OFF"));
+    char tag[24]{};
+    if (cfg.show_mode)
+        std::snprintf(tag, sizeof(tag), "[%s]",
+                      aim.activation_mode == config::combat_profile::activation::always
+                          ? "always"
+                          : aim.activation_mode == config::combat_profile::activation::toggle ? "toggle" : "hold");
+
+    constexpr ImU32 k_enabled = IM_COL32(110, 235, 140, 255);
+    constexpr ImU32 k_disable_flash = IM_COL32(255, 112, 135, 255);
+    const auto idle = active ? k_enabled : k_wm_muted;
+    const auto accent = active ? k_enabled : k_disable_flash;
+    const auto text_color = blend(idle, accent, flash);
+    const auto border = blend(k_wm_border, with_alpha(accent, 0.85f), flash);
+
+    const auto pad_x = 12.0f * metric;
+    const auto pad_y = 9.0f * metric;
+    const auto dot = 7.0f * metric;
+    const auto dot_gap = 8.0f * metric;
+    const auto tag_gap = 8.0f * metric;
+    const auto content_h = std::max(text_size, tag_size);
+    const auto label_w = width_of(text_font, text_size, label);
+    const auto tag_w = tag[0] != '\0' ? width_of(tag_font, tag_size, tag) + tag_gap : 0.0f;
+    const ImVec2 panel_size{pad_x * 2.0f + dot + dot_gap + label_w + tag_w, content_h + pad_y * 2.0f};
+
+    const screen_ui_space ui_space{};
+    const auto display = ui_space.display();
+    const auto position_scale = ui_space.position_scale();
+    migrate_screen_layout(cfg.layout, panel_size, display, dpi, position_scale);
+    auto position = resolve_screen_layout(cfg.layout, panel_size, display, dpi, position_scale);
+    position = clamp_to_display(
+        m_state->aimbot_status.update(interactive, position, panel_size, &cfg.layout.scale), panel_size, display);
+    if (m_state->aimbot_status.active())
+        capture_screen_layout(cfg.layout, position, panel_size, display, dpi, position_scale);
+
+    auto* draw = ImGui::GetForegroundDrawList();
+    const ImVec2 maximum{position.x + panel_size.x, position.y + panel_size.y};
+    const auto rounding = panel_size.y * 0.5f;
+    draw->AddRectFilled(position, maximum, k_wm_bg, rounding);
+    draw->AddRect(position, maximum, border, rounding, ImDrawFlags_None, std::max(1.0f, metric));
+    const auto centre_y = position.y + panel_size.y * 0.5f;
+    const auto dot_x = position.x + pad_x + dot * 0.5f;
+    draw->AddCircleFilled({dot_x, centre_y}, dot * 0.5f, text_color);
+    if (flash > 0.0f)
+        draw->AddCircle({dot_x, centre_y}, dot * 0.5f + 4.0f * metric * flash, with_alpha(accent, flash), 0,
+                        std::max(1.0f, metric));
+    const auto cursor_x = dot_x + dot * 0.5f + dot_gap;
+    draw->AddText(text_font, text_size, {cursor_x, centre_y - text_size * 0.5f}, text_color, label);
+    if (tag[0] != '\0')
+        draw->AddText(tag_font, tag_size, {cursor_x + label_w + tag_gap, centre_y - tag_size * 0.5f}, k_wm_muted, tag);
+}
+
+void panels::draw_flash_status(const bool interactive)
+{
+    auto& cfg = config::general_settings.m_flash_status;
+    if (!cfg.enabled)
+        return;
+
+    constexpr ImU32 k_enemy_flashed = IM_COL32(110, 235, 140, 255);
+    std::vector<compact_panel_row> rows{};
+    const auto local = features::misc::flash_watch().snapshot();
+    if (cfg.show_local && simulation::flash::active(local))
+    {
+        const auto percent = local.blindness * 100.0f;
+        const auto timed = simulation::flash::has_countdown(local.remaining);
+        auto text = timed && percent > 1.0f
+                        ? std::format("{}  {:.1f}s  {:.0f}%", render::localization::tr("You"), local.remaining, percent)
+                        : timed ? std::format("{}  {:.1f}s", render::localization::tr("You"), local.remaining)
+                                : std::format("{}  {:.0f}%", render::localization::tr("You"), percent);
+        rows.push_back({std::move(text), threshold_color(percent, 25.0f, 60.0f)});
+    }
+    if (cfg.show_enemies)
+    {
+        const auto players = game::world().players();
+        std::vector<std::pair<float, const game::player_snapshot*>> flashed{};
+        for (const auto& player : *players)
+        {
+            if (player.health <= 0 || !game::local_player().is_enemy(player.team))
+                continue;
+            const auto timed = simulation::flash::has_countdown(player.flash_remaining);
+            if (!timed && !player.is_flashed)
+                continue;
+            flashed.emplace_back(player.flash_remaining, &player);
+        }
+        std::sort(flashed.begin(), flashed.end(),
+                  [](const auto& left, const auto& right) { return left.first > right.first; });
+        const auto limit = std::clamp(cfg.max_enemies, 1, 5);
+        for (std::size_t index = 0; index < flashed.size() && static_cast<int>(index) < limit; ++index)
+        {
+            const auto* player = flashed[index].second;
+            auto name = player->display_name;
+            if (name.size() > 14)
+                name = name.substr(0, 14) + "...";
+            const auto timed = simulation::flash::has_countdown(flashed[index].first);
+            rows.push_back({timed ? std::format("{}  {:.1f}s", name, flashed[index].first)
+                                  : std::format("{}  {}", name, render::localization::tr("Flashed")),
+                            k_enemy_flashed});
+        }
+    }
+    draw_compact_panel(render::localization::tr("Flash"), rows, cfg.layout, m_state->flash, interactive);
+}
+
+void panels::draw_plant_alert(const bool interactive)
+{
+    using verdict = features::visuals::plant_verdict;
+    auto& cfg = config::visual_settings.m_bomb;
+    auto& layout = config::general_settings.m_plant_alert.layout;
+    if (!cfg.enabled || !cfg.plant_alert)
+        return;
+
+    auto state = features::visuals::bomb().plant_snapshot();
+    if (!state.visible)
+    {
+        if (!interactive)
+            return;
+        // Menu-open preview makes the otherwise event-driven pill positionable.
+        state.visible = true;
+        state.verdict = verdict::will_finish;
+        state.seconds_remaining = 3.5f;
+        state.has_site = true;
+        state.site = 0;
+    }
+
+    layout.scale = std::clamp(layout.scale, 0.55f, 2.0f);
+    const auto dpi_scale = overlay_dpi_scale();
+    const auto user_scale = layout.scale;
+    const auto metric_scale = dpi_scale * user_scale;
+    const auto timer_style = resolve_font(render::fonts().notosans_medium_12, user_scale);
+    auto* timer_font = timer_style.font;
+    const auto badge_style = resolve_font(render::fonts().menu_semibold_13, user_scale);
+    auto* badge_font = badge_style.font;
+    const auto timer_size = timer_style.size * 1.8f;
+    const auto badge_size = badge_style.size;
+
+    const auto& accent_color = state.verdict == verdict::will_finish
+                                   ? cfg.plant_color_ok
+                                   : state.verdict == verdict::too_late ? cfg.plant_color_fail : cfg.plant_color_unknown;
+    const auto accent = IM_COL32(accent_color.r, accent_color.g, accent_color.b, accent_color.a);
+    const auto tint = IM_COL32(accent_color.r, accent_color.g, accent_color.b, 52);
+
+    const auto seconds_text = features::visuals::plant_seconds_text(state.seconds_remaining);
+    const auto* badge_text = !state.has_site ? "?" : state.site == 1 ? "B" : "A";
+    const auto seconds_extent = timer_font->CalcTextSizeA(timer_size, FLT_MAX, 0.0f, seconds_text.c_str());
+    const auto badge_extent = badge_font->CalcTextSizeA(badge_size, FLT_MAX, 0.0f, badge_text);
+
+    const auto pad_x = 9.0f * metric_scale;
+    const auto pad_y = 6.0f * metric_scale;
+    const auto gap = 8.0f * metric_scale;
+    const auto badge_radius = std::max(badge_extent.x, badge_extent.y) * 0.5f + 3.0f * metric_scale;
+    const auto body_height = std::max(badge_radius * 2.0f, seconds_extent.y);
+    const ImVec2 panel_size{pad_x * 2.0f + badge_radius * 2.0f + gap + seconds_extent.x, pad_y * 2.0f + body_height};
+
+    const screen_ui_space ui_space{};
+    const auto display = ui_space.display();
+    const auto position_scale = ui_space.position_scale();
+    migrate_screen_layout(layout, panel_size, display, dpi_scale, position_scale);
+    auto position = resolve_screen_layout(layout, panel_size, display, dpi_scale, position_scale);
+    position =
+        clamp_to_display(m_state->plant.update(interactive, position, panel_size, &layout.scale), panel_size, display);
+    if (m_state->plant.active())
+        capture_screen_layout(layout, position, panel_size, display, dpi_scale, position_scale);
+
+    const ImVec2 draw_min = position;
+    const ImVec2 draw_max{position.x + panel_size.x, position.y + panel_size.y};
+    const auto rounding = 9.0f * metric_scale;
+    auto* draw = ImGui::GetForegroundDrawList();
+    draw->AddRectFilled(draw_min, draw_max, IM_COL32(12, 13, 18, 218), rounding);
+    draw->AddRectFilled(draw_min, draw_max, tint, rounding);
+    draw->AddRect(draw_min, draw_max, accent, rounding, ImDrawFlags_None, std::max(1.0f, metric_scale));
+
+    const auto centre_y = draw_min.y + pad_y + body_height * 0.5f;
+    const auto badge_centre = ImVec2{draw_min.x + pad_x + badge_radius, centre_y};
+    draw->AddCircle(badge_centre, badge_radius, accent, 32, std::max(1.0f, 1.4f * metric_scale));
+    draw->AddText(badge_font, badge_size,
+                  {badge_centre.x - badge_extent.x * 0.5f, badge_centre.y - badge_extent.y * 0.5f}, accent, badge_text);
+    const auto seconds_x = badge_centre.x + badge_radius + gap;
+    draw->AddText(timer_font, timer_size, {seconds_x, centre_y - seconds_extent.y * 0.5f}, accent, seconds_text.c_str());
 }
 
 } // namespace ui::hud
