@@ -127,7 +127,9 @@ set(vesta_sources
     src/features/visuals/sound.cpp
     src/features/misc/auto_accept.cpp
 	 src/features/misc/auto_stop.cpp
+    src/features/misc/anti_flash.cpp
     src/features/misc/bhop.cpp
+    src/features/misc/flash_watch.cpp
     src/features/misc/nade_helper.cpp
 
     # render
