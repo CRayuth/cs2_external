@@ -21,6 +21,13 @@ public:
     void detach() noexcept;
 
     [[nodiscard]] bool copy(std::uintptr_t address, void* destination, std::size_t bytes) const noexcept;
+    [[nodiscard]] bool copy_to(std::uintptr_t address, const void* source, std::size_t bytes) const noexcept;
+
+    template<typename value_t>
+    [[nodiscard]] bool store(std::uintptr_t address, const value_t& value) const noexcept
+    {
+        return copy_to(address, &value, sizeof(value));
+    }
 
     template<typename value_t>
     [[nodiscard]] value_t load(std::uintptr_t address, value_t fallback = {}) const noexcept
@@ -53,6 +60,7 @@ public:
 
     [[nodiscard]] void* native_handle() const noexcept { return m_process; }
     [[nodiscard]] std::uint32_t process_id() const noexcept { return m_process_id; }
+    [[nodiscard]] bool writable() const noexcept { return m_writable; }
     [[nodiscard]] explicit operator bool() const noexcept { return m_process != nullptr; }
 
 private:
@@ -68,6 +76,7 @@ private:
 
     std::uint32_t m_process_id{};
     void* m_process{};
+    bool m_writable{};
 };
 
 } // namespace platform::windows

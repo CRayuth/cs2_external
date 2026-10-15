@@ -71,6 +71,7 @@ set(vesta_sources
     src/foundation/math/random.cpp
     src/foundation/math/vector.cpp
     src/game/memory/addresses.cpp
+    src/game/memory/offsets_dump.cpp
     src/game/memory/bound_services.cpp
     src/game/memory/convars.cpp
     src/game/memory/compatibility.cpp

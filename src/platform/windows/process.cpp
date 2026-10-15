@@ -235,7 +235,12 @@ bool process_session::attach(std::wstring_view executable)
         return false;
     }
 
-    m_process = ::OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | SYNCHRONIZE, FALSE, m_process_id);
+    constexpr auto read_access = PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | SYNCHRONIZE;
+    constexpr auto write_access = read_access | PROCESS_VM_WRITE | PROCESS_VM_OPERATION;
+    m_process = ::OpenProcess(write_access, FALSE, m_process_id);
+    m_writable = m_process != nullptr;
+    if (!m_process)
+        m_process = ::OpenProcess(read_access, FALSE, m_process_id);
     if (!m_process)
     {
         const auto error = ::GetLastError();
@@ -253,6 +258,7 @@ void process_session::detach() noexcept
         ::CloseHandle(m_process);
     m_process = nullptr;
     m_process_id = 0;
+    m_writable = false;
 }
 
 bool process_session::copy(std::uintptr_t address, void* destination, std::size_t bytes) const noexcept
@@ -267,6 +273,16 @@ bool process_session::copy(std::uintptr_t address, void* destination, std::size_
                            transferred == bytes;
     diagnostics::performance::record_rpm(bytes, succeeded, started);
     return succeeded;
+}
+
+bool process_session::copy_to(std::uintptr_t address, const void* source, std::size_t bytes) const noexcept
+{
+    if (!m_process || !m_writable || !address || !source || !bytes)
+        return false;
+
+    SIZE_T transferred{};
+    return ::WriteProcessMemory(m_process, reinterpret_cast<void*>(address), source, bytes, &transferred) != FALSE &&
+           transferred == bytes;
 }
 
 process_session::module_record process_session::find_module(std::string_view name) const

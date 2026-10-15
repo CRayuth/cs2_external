@@ -17,6 +17,7 @@ public:
     std::uintptr_t global_vars{};
     std::uintptr_t view_matrix{};
     std::uintptr_t auto_accept{};
+    int dump_globals{};
 };
 
 } // namespace game

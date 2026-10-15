@@ -1,4 +1,5 @@
 #include <stdafx.hpp>
+#include <simulation/flash_model.hpp>
 #include <foundation/identity.hpp>
 #include <config/combat.hpp>
 #include <config/settings.hpp>
@@ -596,6 +597,7 @@ struct player_offsets
     std::ptrdiff_t pawn_scoped;
     std::ptrdiff_t pawn_defusing;
     std::ptrdiff_t pawn_flash_time;
+    std::ptrdiff_t pawn_flash_duration;
     std::ptrdiff_t pawn_eye_angles;
     std::ptrdiff_t pawn_item_services;
     std::ptrdiff_t pawn_weapon_services;
@@ -646,6 +648,13 @@ const player_offsets& player_schema()
         SCHEMA("C_CSPlayerPawn", "m_bIsScoped"_id),
         SCHEMA("C_CSPlayerPawn", "m_bIsDefusing"_id),
         SCHEMA("C_CSPlayerPawnBase", "m_flFlashBangTime"_id),
+        []()
+        {
+            auto value = SCHEMA("C_CSPlayerPawnBase", "m_flFlashDuration"_id);
+            if (value <= 0)
+                value = SCHEMA("C_CSPlayerPawn", "m_flFlashDuration"_id);
+            return value;
+        }(),
         SCHEMA("C_CSPlayerPawn", "m_angEyeAngles"_id),
         SCHEMA("C_BasePlayerPawn", "m_pItemServices"_id),
         SCHEMA("C_BasePlayerPawn", "m_pWeaponServices"_id),
@@ -794,11 +803,13 @@ bool world_sampler::read_player(const player_pass& pass, const entity_directory:
     const auto spotted_offset = o.pawn_spotted_state + o.spotted;
     const auto spotted_mask_offset = o.pawn_spotted_state + o.spotted_by_mask;
     const auto status_first = std::min({o.pawn_emit_sound, o.pawn_armor, o.pawn_scoped, o.pawn_defusing,
-                                        o.pawn_flash_time, o.pawn_last_fired, spotted_offset, spotted_mask_offset});
+                                        o.pawn_flash_time, o.pawn_flash_duration, o.pawn_last_fired, spotted_offset,
+                                        spotted_mask_offset});
     const auto status_last =
         std::max({o.pawn_emit_sound + sizeof(float), o.pawn_last_fired + sizeof(float), spotted_offset + sizeof(bool),
                   spotted_mask_offset + sizeof(std::uint64_t), o.pawn_armor + sizeof(std::int32_t),
-                  o.pawn_scoped + sizeof(bool), o.pawn_defusing + sizeof(bool), o.pawn_flash_time + sizeof(float)});
+                  o.pawn_scoped + sizeof(bool), o.pawn_defusing + sizeof(bool), o.pawn_flash_time + sizeof(float),
+                  o.pawn_flash_duration + sizeof(float)});
     const remote_span pawn_status(process, player_pawn, status_first, status_last);
     p.emit_sound_time = pawn_status.get<float>(player_pawn, o.pawn_emit_sound);
     p.last_fired_time = pawn_status.get<float>(player_pawn, o.pawn_last_fired);
@@ -807,7 +818,10 @@ bool world_sampler::read_player(const player_pass& pass, const entity_directory:
     p.armor = pawn_status.get<std::int32_t>(player_pawn, o.pawn_armor);
     p.is_scoped = pawn_status.get<bool>(player_pawn, o.pawn_scoped);
     p.is_defusing = pawn_status.get<bool>(player_pawn, o.pawn_defusing);
-    p.is_flashed = pawn_status.get<float>(player_pawn, o.pawn_flash_time) > 0.0f;
+    const auto flash_bang_time = pawn_status.get<float>(player_pawn, o.pawn_flash_time);
+    p.is_flashed = flash_bang_time > 0.0f;
+    p.flash_remaining = simulation::flash::remaining_seconds(
+        flash_bang_time, pawn_status.get<float>(player_pawn, o.pawn_flash_duration), game::local_player().game_time());
 
     const auto aim_first = std::min(o.pawn_immunity, o.pawn_eye_angles);
     const auto aim_last = std::max(o.pawn_immunity + sizeof(bool), o.pawn_eye_angles + sizeof(foundation::vec3));

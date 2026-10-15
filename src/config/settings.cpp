@@ -778,7 +778,8 @@ static void to_json(json& j, const visual_profile::player::info_flags& f)
              {"flashed", f.flashed_style},
              {"ping", f.ping_style},
              {"distance", f.distance_style},
-             {"bomb_damage", f.bomb_damage_style}};
+             {"bomb_damage", f.bomb_damage_style},
+             {"flash_countdown", f.flash_countdown}};
 }
 
 static void from_json(const json& j, visual_profile::player::info_flags& f)
@@ -802,6 +803,7 @@ static void from_json(const json& j, visual_profile::player::info_flags& f)
     load_style("ping", "ping_color", f.ping_style);
     load_style("distance", "distance_color", f.distance_style);
     load_style("bomb_damage", "bomb_damage_color", f.bomb_damage_style);
+    read_field(j, "flash_countdown", f.flash_countdown);
 }
 
 static void to_json(json& j, const visual_profile::player::name& n)
@@ -1172,6 +1174,12 @@ static void to_json(json& j, const visual_profile::bomb& b)
              {"timer_text_color", b.timer_text_color},
              {"show_info_panel", b.show_info_panel},
              {"panel_background", b.panel_background},
+             {"defuse_alert", b.defuse_alert},
+             {"defuse_alert_sound", b.defuse_alert_sound},
+             {"plant_alert", b.plant_alert},
+             {"plant_color_ok", b.plant_color_ok},
+             {"plant_color_fail", b.plant_color_fail},
+             {"plant_color_unknown", b.plant_color_unknown},
              {"show_safe_zone", b.show_safe_zone},
              {"safe_zone_color", b.safe_zone_color},
              {"safe_zone_bands", b.safe_zone_bands},
@@ -1193,6 +1201,12 @@ static void from_json(const json& j, visual_profile::bomb& b)
     read_field(j, "timer_text_color", b.timer_text_color);
     read_field(j, "show_info_panel", b.show_info_panel);
     read_field(j, "panel_background", b.panel_background);
+    read_field(j, "defuse_alert", b.defuse_alert);
+    read_field(j, "defuse_alert_sound", b.defuse_alert_sound);
+    read_field(j, "plant_alert", b.plant_alert);
+    read_field(j, "plant_color_ok", b.plant_color_ok);
+    read_field(j, "plant_color_fail", b.plant_color_fail);
+    read_field(j, "plant_color_unknown", b.plant_color_unknown);
     read_field(j, "show_safe_zone", b.show_safe_zone);
     read_field(j, "safe_zone_color", b.safe_zone_color);
     read_field(j, "safe_zone_bands", b.safe_zone_bands);
@@ -1409,6 +1423,8 @@ static void to_json(json& j, const visual_profile::chams& c)
          json{{"enabled", c.on_shot.enabled}, {"duration", c.on_shot.duration}, {"appearance", c.on_shot.appearance}}},
         {"occlude_dynamic_doors", c.occlude_dynamic_doors},
         {"occlude_smoke", c.occlude_smoke},
+        {"smooth_transition", c.smooth_transition},
+        {"transition_time", c.transition_time},
         {"visible", c.visible},
         {"invisible", c.invisible}};
 }
@@ -1444,6 +1460,9 @@ static void from_json(const json& j, visual_profile::chams& c)
     }
     read_field(j, "occlude_dynamic_doors", c.occlude_dynamic_doors);
     read_field(j, "occlude_smoke", c.occlude_smoke);
+    read_field(j, "smooth_transition", c.smooth_transition);
+    read_field(j, "transition_time", c.transition_time);
+    c.transition_time = std::clamp(c.transition_time, 0.0f, 1.0f);
     read_field(j, "visible", c.visible);
     read_field(j, "invisible", c.invisible);
     c.glow_effect.radius = std::clamp(c.glow_effect.radius, 0.5f, 16.0f);
@@ -1556,6 +1575,9 @@ static void to_json(json& j, const general_profile::hitsound& h)
     j = json{{"enabled", h.enabled},
              {"style", h.style},
              {"volume", h.volume},
+             {"kill_enabled", h.kill_enabled},
+             {"kill_style", h.kill_style},
+             {"kill_volume", h.kill_volume},
              {"show_damage", h.show_damage},
              {"damage_color", h.damage_color},
              {"damage_size", h.damage_size},
@@ -1568,6 +1590,9 @@ static void from_json(const json& j, general_profile::hitsound& h)
     read_field(j, "enabled", h.enabled);
     read_field(j, "style", h.style);
     read_field(j, "volume", h.volume);
+    read_field(j, "kill_enabled", h.kill_enabled);
+    read_field(j, "kill_style", h.kill_style);
+    read_field(j, "kill_volume", h.kill_volume);
     read_field(j, "show_damage", h.show_damage);
     read_field(j, "damage_color", h.damage_color);
     read_field(j, "damage_size", h.damage_size);
@@ -1575,6 +1600,8 @@ static void from_json(const json& j, general_profile::hitsound& h)
     read_field(j, "damage_rise", h.damage_rise);
     h.style = std::clamp(h.style, 0, 4);
     h.volume = std::clamp(h.volume, 0.0f, 1.0f);
+    h.kill_style = std::clamp(h.kill_style, 0, 4);
+    h.kill_volume = std::clamp(h.kill_volume, 0.0f, 1.0f);
     h.damage_size = std::clamp(h.damage_size, 8.0f, 28.0f);
     h.damage_duration = std::clamp(h.damage_duration, 0.15f, 2.0f);
     h.damage_rise = std::clamp(h.damage_rise, 0.0f, 100.0f);
@@ -1703,6 +1730,37 @@ static void from_json(const json& j, general_profile::keybind_list& k)
     read_field(j, "show_toggle", k.show_toggle);
 }
 
+static void to_json(json& j, const general_profile::aimbot_status& s)
+{
+    j = json{{"enabled", s.enabled}, {"layout", s.layout}, {"show_mode", s.show_mode}};
+}
+
+static void from_json(const json& j, general_profile::aimbot_status& s)
+{
+    read_field(j, "enabled", s.enabled);
+    read_field(j, "layout", s.layout);
+    read_field(j, "show_mode", s.show_mode);
+}
+
+static void to_json(json& j, const general_profile::flash_status& f)
+{
+    j = json{{"enabled", f.enabled},
+             {"layout", f.layout},
+             {"show_local", f.show_local},
+             {"show_enemies", f.show_enemies},
+             {"max_enemies", f.max_enemies}};
+}
+
+static void from_json(const json& j, general_profile::flash_status& f)
+{
+    read_field(j, "enabled", f.enabled);
+    read_field(j, "layout", f.layout);
+    read_field(j, "show_local", f.show_local);
+    read_field(j, "show_enemies", f.show_enemies);
+    read_field(j, "max_enemies", f.max_enemies);
+    f.max_enemies = std::clamp(f.max_enemies, 1, 5);
+}
+
 static void to_json(json& j, const general_profile::bomb_info& b)
 {
     j = json{};
@@ -1724,6 +1782,30 @@ static void from_json(const json& j, general_profile::bomb_info& b)
         b.layout.version = 0;
         read_field(j, "position_x", b.layout.legacy_position_x);
         read_field(j, "position_y", b.layout.legacy_position_y);
+    }
+}
+
+static void to_json(json& j, const general_profile::plant_alert& a)
+{
+    j = json{};
+    if (a.layout.version >= 1)
+        j["layout"] = a.layout;
+    else
+    {
+        j["position_x"] = a.layout.legacy_position_x;
+        j["position_y"] = a.layout.legacy_position_y;
+    }
+}
+
+static void from_json(const json& j, general_profile::plant_alert& a)
+{
+    if (j.contains("layout"))
+        j.at("layout").get_to(a.layout);
+    else
+    {
+        a.layout.version = 0;
+        read_field(j, "position_x", a.layout.legacy_position_x);
+        read_field(j, "position_y", a.layout.legacy_position_y);
     }
 }
 
@@ -1896,7 +1978,10 @@ static void to_json(json& j, const general_profile& m)
              {"m_spectator_list", m.m_spectator_list},
              {"m_event_log", m.m_event_log},
              {"m_keybind_list", m.m_keybind_list},
+             {"m_aimbot_status", m.m_aimbot_status},
+             {"m_flash_status", m.m_flash_status},
              {"m_bomb_info", m.m_bomb_info},
+             {"m_plant_alert", m.m_plant_alert},
              {"m_bunny_hop", m.m_bunny_hop},
              {"m_edge_jump", m.m_edge_jump},
              {"m_game_controls", m.m_game_controls},
@@ -1930,7 +2015,10 @@ static void from_json(const json& j, general_profile& m)
     read_field(j, "m_spectator_list", m.m_spectator_list);
     read_field(j, "m_event_log", m.m_event_log);
     read_field(j, "m_keybind_list", m.m_keybind_list);
+    read_field(j, "m_aimbot_status", m.m_aimbot_status);
+    read_field(j, "m_flash_status", m.m_flash_status);
     read_field(j, "m_bomb_info", m.m_bomb_info);
+    read_field(j, "m_plant_alert", m.m_plant_alert);
     read_field(j, "m_bunny_hop", m.m_bunny_hop);
     read_field(j, "m_edge_jump", m.m_edge_jump);
     read_field(j, "m_game_controls", m.m_game_controls);
@@ -2114,6 +2202,18 @@ bool apply_default_config()
                               diagnostics::current_exception_message());
         return false;
     }
+}
+
+void reset_to_defaults()
+{
+    const auto language = general_settings.language;
+    combat_settings = combat_profile{};
+    visual_settings = visual_profile{};
+    general_settings = general_profile{};
+    apply_default_config();
+    general_settings.language = language;
+    publish_runtime_snapshot();
+    storage.write_cache();
 }
 
 std::string configuration_store::cache_path() const

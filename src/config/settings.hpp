@@ -43,5 +43,6 @@ void decode_config_json(const nlohmann::json& document, runtime_snapshot& into);
 // Decodes into a copy and commits only a fully decoded document.
 void apply_config_json(const nlohmann::json& document);
 bool apply_default_config();
+void reset_to_defaults();
 
 } // namespace config
