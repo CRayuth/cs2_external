@@ -64,6 +64,7 @@ enum class zone : std::uint8_t
     aim_flush,
     automation_tick,
     round_alert,
+    hvh_tick,
     count
 };
 

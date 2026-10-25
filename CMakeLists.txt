@@ -119,6 +119,7 @@ set(vesta_sources
     src/features/aimbot/command_ring.cpp
     src/features/aimbot/command_steering.cpp
     src/features/aimbot/grenade_aim.cpp
+    src/features/hvh/hvh.cpp
     src/features/trigger/seed_trigger.cpp
     src/features/aimbot/seed_plan.cpp
     src/features/aimbot/seed_state.cpp

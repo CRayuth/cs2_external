@@ -23,6 +23,7 @@
 #include <simulation/shot_state.hpp>
 #include <simulation/seed_schedule.hpp>
 #include <features/visuals/visuals.hpp>
+#include <features/hvh/hvh.hpp>
 #include <features/visuals/hitsound.hpp>
 
 namespace app::workers
@@ -524,6 +525,26 @@ void seed_trigger(control control)
 
         wait.wait(simulation::seed_schedule::poll_interval(can_run && runtime.input_pending(),
                                                            can_run && configured && latency_requested));
+    }
+}
+
+void hvh(control control)
+{
+    // The injected module is a companion, not a hot path. A tick here is a few reads through a mapped block and
+    // a heartbeat compare, so it runs slowly while nothing is loaded and holds roughly the command rate once
+    // the module is alive: that is what keeps the status the menu shows and the silent-aim arming honest.
+    constexpr auto active_interval = std::chrono::milliseconds(8);
+    constexpr auto idle_interval = std::chrono::milliseconds(100);
+    ::SetThreadPriority(::GetCurrentThread(), THREAD_PRIORITY_NORMAL);
+
+    auto& module = features::hvh::controller();
+    while (!control.stopping())
+    {
+        {
+            VESTA_PERF_SCOPE(hvh_tick);
+            module.tick();
+        }
+        control.sleep_for(module.dll_active() ? active_interval : idle_interval);
     }
 }
 

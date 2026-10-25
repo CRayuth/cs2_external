@@ -114,7 +114,13 @@ namespace diagnostics
     X(autoaccept_scan, "autoaccept.scan")                                                                              \
     X(diagnostic_warning, "diagnostic.warning")                                                                             \
     X(silent_aim_state, "silentaim.state")                                                                                   \
-    X(rcs_transport_probe, "rcs.transport_probe")
+    X(rcs_transport_probe, "rcs.transport_probe")                                                                      \
+    X(hvh_inject_begin, "hvh.inject.begin")                                                                            \
+    X(hvh_inject_ready, "hvh.inject.ready")                                                                            \
+    X(hvh_inject_failed, "hvh.inject.failed")                                                                          \
+    X(hvh_ejected, "hvh.eject")                                                                                        \
+    X(hvh_config_failed, "hvh.config.failed")                                                                          \
+    X(hvh_module_state, "hvh.module.state")
 
 enum class event : std::uint16_t
 {
@@ -144,7 +150,9 @@ enum class subject : std::uint8_t
     seed_trigger,
     watchdog,
     profile_timeout,
-    last = profile_timeout
+    // The injected-module controller: its worker poll, the loader/ejector and hvh.json.
+    hvh,
+    last = hvh
 };
 
 enum class severity : std::uint8_t

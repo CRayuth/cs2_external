@@ -5,6 +5,7 @@
 #include <app/workers.hpp>
 #include <scripting/runtime.hpp>
 #include <app/trace_session.hpp>
+#include <features/hvh/hvh.hpp>
 #include <simulation/shot_trace.hpp>
 
 namespace app
@@ -21,6 +22,9 @@ enum worker_id : foundation::thread_group::worker_id
     seed_trigger,
     watchdog,
     profile_timeout,
+    // Last on purpose: the failure record maps a worker id onto diagnostics::subject by position, and the
+    // subject list ends with hvh.
+    hvh,
 };
 }
 runtime_session::runtime_session(context_t& context)
@@ -90,6 +94,7 @@ void runtime_session::start_workers()
     start(movement, workers::movement);
     start(combat, workers::combat);
     start(lineup, workers::nade_helper);
+    start(hvh, workers::hvh);
     start(seed_trigger, workers::seed_trigger);
 #if defined(VESTA_ENABLE_CONSOLE) && VESTA_ENABLE_CONSOLE
     start(watchdog, workers::watchdog);
@@ -113,6 +118,10 @@ void runtime_session::quiesce() noexcept
     m_quiesced = true;
     diagnostics::emit(diagnostics::event::runtime_quiesce_begin);
     m_workers.stop_and_join();
+    // After the join, and nowhere earlier: the combat worker is the only writer of the aim half of the shared
+    // block, so the block must still be mapped while it can run. This is where the module is asked to unload
+    // and where hvh.json is written.
+    features::hvh::controller().shutdown();
     if (m_scripting_constructed)
         scripting::runtime().shutdown();
     if (m_trace_started)
