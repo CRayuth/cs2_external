@@ -232,9 +232,12 @@ void controller_t::publish()
 
 void controller_t::tick()
 {
+    // Stay out of the way until the panel has been opened. Mapping the block, reading hvh.json and polling a
+    // heartbeat that will never come is work for a feature this session never asked for, and the block has to
+    // exist before the aim path can hand anything to it - which only happens after the panel made it exist.
     if (!m_initialized.load(std::memory_order_acquire))
     {
-        initialize();
+        return;
     }
 
     {
@@ -529,19 +532,21 @@ bool controller_t::eject()
 
 void controller_t::shutdown()
 {
+    std::scoped_lock lock(m_state_mutex);
+    if (!m_initialized.load(std::memory_order_acquire))
     {
-        std::scoped_lock lock(m_state_mutex);
-        if (auto* view = m_view.load(std::memory_order_acquire))
-        {
-            // Ask for the unload before anything else leaves, and never wait for it: a game that has already
-            // gone would leave this holding the exit up.
-            view->state.unload_request = 1;
-        }
-        m_aim_mirror.store(false, std::memory_order_release);
-        save();
-        release_mapping();
-        m_initialized.store(false, std::memory_order_release);
+        return; // Never opened: nothing to unload, nothing that changed, no file to write.
     }
+    if (auto* view = m_view.load(std::memory_order_acquire))
+    {
+        // Ask for the unload before anything else leaves, and never wait for it: a game that has already gone
+        // would leave this holding the exit up.
+        view->state.unload_request = 1;
+    }
+    m_aim_mirror.store(false, std::memory_order_release);
+    save();
+    release_mapping();
+    m_initialized.store(false, std::memory_order_release);
 }
 
 void controller_t::load()

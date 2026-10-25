@@ -36,6 +36,10 @@ void menu_t::draw_hvh()
 {
     auto& module = features::hvh::controller();
     auto& s = module.settings;
+    // Opening the panel is what asks for the module: it reads hvh.json and maps the block, so the switches
+    // show what is stored rather than the compiled defaults, and the worker starts polling a block that
+    // exists. Idempotent, so drawing the page every frame costs one atomic read.
+    module.initialize();
     // Snapshot of the config half before the widgets get at it. The struct is plain int32s, so a byte compare
     // is the whole question of whether this frame changed anything.
     const auto before = s;
