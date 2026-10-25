@@ -1,12 +1,67 @@
 #include <stdafx.hpp>
+#include <foundation/identity.hpp>
+#include <game/memory/bound_services.hpp>
 #include <game/state/services.hpp>
 #include <game/state/constants.hpp>
 #include <game/state/pose.hpp>
 #include <simulation/collision.hpp>
 #include <features/visuals/visuals.hpp>
+#include <chrono>
+#include <cmath>
 
 namespace features::visuals
 {
+
+namespace
+{
+// Seconds since the first frame. Only the distance between two samples matters, so a monotonic clock is enough.
+[[nodiscard]] double frame_seconds()
+{
+    static const auto epoch = std::chrono::steady_clock::now();
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - epoch).count();
+}
+
+// Rotates the hue of `base` around the clock while keeping its saturation and brightness, so a saturated colour
+// stays saturated and a pastel stays pastel.
+[[nodiscard]] foundation::rgba hue_rotated(const foundation::rgba base, const double seconds, const float speed)
+{
+    const auto high = std::max({base.r, base.g, base.b});
+    const auto low = std::min({base.r, base.g, base.b});
+    if (high == 0 || base.a == 0)
+        return base;
+
+    const auto value = static_cast<float>(high) / 255.0f;
+    const auto saturation = static_cast<float>(high - low) / static_cast<float>(high);
+
+    auto hue = static_cast<float>(std::fmod(seconds * static_cast<double>(speed), 1.0));
+    if (hue < 0.0f)
+        hue += 1.0f;
+
+    const auto sector = hue * 6.0f;
+    const auto index = std::min(5, static_cast<int>(sector));
+    const auto fraction = sector - std::floor(sector);
+    const auto p = value * (1.0f - saturation);
+    const auto q = value * (1.0f - saturation * fraction);
+    const auto t = value * (1.0f - saturation * (1.0f - fraction));
+
+    float red{}, green{}, blue{};
+    switch (index)
+    {
+        case 0: red = value, green = t, blue = p; break;
+        case 1: red = q, green = value, blue = p; break;
+        case 2: red = p, green = value, blue = t; break;
+        case 3: red = p, green = q, blue = value; break;
+        case 4: red = t, green = p, blue = value; break;
+        default: red = value, green = p, blue = q; break;
+    }
+
+    const auto channel = [](const float component)
+    {
+        return static_cast<std::uint8_t>(std::lround(std::clamp(component, 0.0f, 1.0f) * 255.0f));
+    };
+    return foundation::rgba{channel(red), channel(green), channel(blue), base.a};
+}
+} // namespace
 
 void crosshair_t::on_render(render::draw::draw_list& draw_list)
 {
@@ -19,6 +74,12 @@ void crosshair_t::on_render(render::draw::draw_list& draw_list)
     if (sw <= 0 || sh <= 0)
         return;
 
+    const auto pawn = game::local_player().pawn();
+    const auto scoped = pawn != 0 &&
+                        game::bound_memory().process.load<bool>(
+                            pawn + SCHEMA("C_CSPlayerPawn", "m_bIsScoped"_id));
+    if (scoped && cfg.hide_when_scoped)
+        return;
 
     auto crosshair_color = cfg.color;
     bool penetration_override{};
@@ -55,13 +116,38 @@ void crosshair_t::on_render(render::draw::draw_list& draw_list)
     const auto center_x = static_cast<float>(sw) * 0.5f;
     const auto center_y = static_cast<float>(sh) * 0.5f;
 
+    if (cfg.rgb && !penetration_override)
+        crosshair_color = hue_rotated(cfg.color, frame_seconds(), cfg.rgb_speed);
+
+    // Through the scope the game hides its own crosshair and draws one thin line; mirror that instead of the arms.
+    if (scoped && cfg.sniper_mode)
+    {
+        const auto width = std::max(1.0f, std::round(cfg.sniper_width));
+        const auto height = std::round(static_cast<float>(sh) * 0.45f);
+        draw_list.add_rect_filled(center_x - width * 0.5f, center_y - height, width, height * 2.0f, crosshair_color);
+        return;
+    }
+
     const auto bar = std::max(1.0f, std::round(cfg.thickness));
     const auto center_lo_x = center_x - bar * 0.5f;
     const auto center_hi_x = center_lo_x + bar;
     const auto center_lo_y = center_y - bar * 0.5f;
     const auto center_hi_y = center_lo_y + bar;
 
-    const auto gap = std::clamp(std::round(cfg.gap), -128.0f, 256.0f);
+    auto gap_offset = 0.0f;
+    if (cfg.dynamic && pawn != 0)
+    {
+        const auto velocity = game::bound_memory().process.load<foundation::vec3>(
+            pawn + SCHEMA("C_BaseEntity", "m_vecAbsVelocity"_id));
+        if (std::isfinite(velocity.x) && std::isfinite(velocity.y))
+        {
+            const auto speed = std::sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
+            const auto ratio = std::clamp(speed / std::max(cfg.dynamic_speed, 1.0f), 0.0f, 1.0f);
+            gap_offset = std::round(cfg.dynamic_gap * ratio);
+        }
+    }
+
+    const auto gap = std::clamp(std::round(cfg.gap) + gap_offset, -128.0f, 256.0f);
     const auto length = std::max(0.0f, std::round(cfg.length));
     const auto outline =
         (cfg.outline && cfg.outline_color.a > 0) ? std::max(1.0f, std::round(cfg.outline_thickness)) : 0.0f;

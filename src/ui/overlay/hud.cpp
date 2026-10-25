@@ -7,10 +7,13 @@
 #include <game/state/services.hpp>
 #include <ui/presentation.hpp>
 #include <features/misc/auto_stop.hpp>
+#include <features/aimbot/command_steering.hpp>
 #include <features/misc/anti_flash.hpp>
 #include <features/misc/flash_watch.hpp>
 #include <features/visuals/event_log.hpp>
 #include <features/visuals/visuals.hpp>
+#include <game/input/action_state.hpp>
+#include <game/input/bindings.hpp>
 #include <render/text/localization.hpp>
 #include <ui/overlay/hud.hpp>
 #include <ui/overlay/activation_status.hpp>
@@ -19,6 +22,7 @@
 #include <resources/watermark_loss_icon.hpp>
 #include <imgui.h>
 #include <ui/menu/menu.hpp>
+#include <cctype>
 
 namespace ui::hud
 {
@@ -422,6 +426,7 @@ struct hud_state
     panel_drag aimbot_status;
     panel_drag flash;
     panel_drag plant;
+    panel_drag keystrokes;
     ui::notices::dismissals closed_notices;
     std::uint64_t loading_serial{};
     std::chrono::steady_clock::time_point loading_since{};
@@ -1169,6 +1174,17 @@ void panels::draw_keybind_list(const bool interactive)
         rows.push_back({"Bunny Hop  [hold]", k_wm_text});
     if (cfg.show_hold && misc.m_edge_jump.enabled && key_down(misc.m_edge_jump.activation_key))
         rows.push_back({"Edge Jump  [hold]", k_wm_text});
+    // Speed Hack supports the tri-state like the visual profiles. Only show the row when the feature
+    // is currently active (which the key_activation latch answers directly), and label it with the
+    // mode that produced the state, not a fixed "hold".
+    if (misc.m_speed_hack.enabled && misc.m_speed_hack.active())
+    {
+        const auto& sh = misc.m_speed_hack;
+        const auto* mode = sh.activation_mode == config::general_profile::speed_hack::always_on
+                               ? "always"
+                               : sh.activation_mode == config::general_profile::speed_hack::toggle ? "toggle" : "hold";
+        rows.push_back({std::format("Speed Hack  [{}]", mode), k_wm_text});
+    }
     if (cfg.show_hold && misc.m_nade_helper.enabled && misc.m_nade_helper.aim_assist &&
         key_down(misc.m_nade_helper.aim_key))
         rows.push_back({"Nade Helper  [hold]", k_wm_text});
@@ -1389,10 +1405,18 @@ void panels::draw_aimbot_status(const bool interactive)
                   active ? render::localization::tr("ON") : render::localization::tr("OFF"));
     char tag[24]{};
     if (cfg.show_mode)
-        std::snprintf(tag, sizeof(tag), "[%s]",
-                      aim.activation_mode == config::combat_profile::activation::always
-                          ? "always"
-                          : aim.activation_mode == config::combat_profile::activation::toggle ? "toggle" : "hold");
+    {
+        const auto* mode = aim.activation_mode == config::combat_profile::activation::always
+                               ? "always"
+                               : aim.activation_mode == config::combat_profile::activation::toggle ? "toggle" : "hold";
+        // A transport note rather than a second activation state, and it says so when the steered angle does
+        // not reach the game: silent aim that quietly fell back to mouse input would otherwise look unchanged.
+        if (aim.silent)
+            std::snprintf(tag, sizeof(tag), "[%s %s]", mode,
+                          features::aimbot::command_steering().healthy() ? "silent" : "no write");
+        else
+            std::snprintf(tag, sizeof(tag), "[%s]", mode);
+    }
 
     constexpr ImU32 k_enabled = IM_COL32(110, 235, 140, 255);
     constexpr ImU32 k_disable_flash = IM_COL32(255, 112, 135, 255);
@@ -1563,6 +1587,136 @@ void panels::draw_plant_alert(const bool interactive)
                   {badge_centre.x - badge_extent.x * 0.5f, badge_centre.y - badge_extent.y * 0.5f}, accent, badge_text);
     const auto seconds_x = badge_centre.x + badge_radius + gap;
     draw->AddText(timer_font, timer_size, {seconds_x, centre_y - seconds_extent.y * 0.5f}, accent, seconds_text.c_str());
+}
+
+namespace
+{
+// The key the action is actually bound to, upper-cased for the key cap. `fallback` covers a binding the game has not
+// published yet, and is also what the label reads while the configuration is still empty.
+[[nodiscard]] std::string binding_label(const game::input_action action, const char* fallback)
+{
+    auto text = game::input_bindings().resolve(action).name;
+    if (text.empty())
+        text = fallback;
+    for (auto& character : text)
+        character = static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
+    return text;
+}
+
+// One key cap. Layout is a grid of equal cells along the width, so a wide key is the same cap spanning two cells.
+struct key_cell
+{
+    game::input_action action{};
+    const char* fallback{};
+    int column{};
+    int span{1};
+};
+} // namespace
+
+void panels::draw_keystrokes(const bool interactive)
+{
+    auto& cfg = config::general_settings.m_keystrokes;
+    if (!cfg.enabled)
+        return;
+
+    const auto dpi_scale = overlay_dpi_scale();
+    cfg.layout.scale = std::clamp(cfg.layout.scale, 0.55f, 2.0f);
+    const auto user_scale = cfg.layout.scale;
+    const auto metric_scale = dpi_scale * user_scale;
+    const auto style = resolve_font(render::fonts().menu_semibold_13, user_scale);
+    auto* font = style.font;
+    const auto base_font_size = style.size;
+
+    const auto key_size = std::clamp(cfg.key_size, 16.0f, 96.0f) * metric_scale;
+    const auto gap = std::max(2.0f, 4.0f * metric_scale);
+    const auto rounding = std::max(2.0f, 6.0f * metric_scale);
+    const auto pad = std::max(4.0f, 10.0f * metric_scale);
+
+    // WASD on top, jump and crouch below, and the fire button under them; the arrangement every keystroke overlay uses.
+    static constexpr key_cell forward_row[]{{game::input_action::forward, "W", 1, 1}};
+    static constexpr key_cell strafe_row[]{{game::input_action::left, "A", 0, 1},
+                                            {game::input_action::back, "S", 1, 1},
+                                            {game::input_action::right, "D", 2, 1}};
+    static constexpr key_cell vertical_row[]{{game::input_action::jump, "SPACE", 0, 2},
+                                             {game::input_action::duck, "CTRL", 2, 1}};
+    static constexpr key_cell mouse_row[]{{game::input_action::attack, "LMB", 0, 3}};
+
+    struct key_row
+    {
+        const key_cell* cells{};
+        std::size_t count{};
+        bool visible{};
+    };
+    const key_row rows[]{{forward_row, 1, true},
+                         {strafe_row, 3, true},
+                         {vertical_row, 2, true},
+                         {mouse_row, 1, cfg.show_mouse}};
+
+    std::size_t visible_rows{};
+    for (const auto& entry : rows)
+        visible_rows += entry.visible ? 1u : 0u;
+    if (visible_rows == 0)
+        return;
+
+    constexpr int columns = 3;
+    const auto grid_width = columns * key_size + (columns - 1) * gap;
+    const auto rows_height =
+        static_cast<float>(visible_rows) * key_size + static_cast<float>(visible_rows - 1) * gap;
+    const ImVec2 panel_size{grid_width + pad * 2.0f, rows_height + pad * 2.0f};
+
+    const screen_ui_space ui_space{};
+    const auto display = ui_space.display();
+    const auto position_scale = ui_space.position_scale();
+    migrate_screen_layout(cfg.layout, panel_size, display, dpi_scale, position_scale);
+    auto position = resolve_screen_layout(cfg.layout, panel_size, display, dpi_scale, position_scale);
+    position = clamp_to_display(m_state->keystrokes.update(interactive, position, panel_size, &cfg.layout.scale),
+                                panel_size, display);
+    if (m_state->keystrokes.active())
+        capture_screen_layout(cfg.layout, position, panel_size, display, dpi_scale, position_scale);
+
+    const ImVec2 draw_min = position;
+    const ImVec2 draw_max{position.x + panel_size.x, position.y + panel_size.y};
+    auto* draw = ImGui::GetForegroundDrawList();
+    draw_panel_shadow(draw, draw_min, draw_max, rounding, 1.4f * metric_scale, 26.0f);
+    draw->AddRectFilled(draw_min, draw_max, k_wm_bg, rounding * 1.4f);
+
+    const auto& accent = config::general_settings.palette.accent;
+    const auto accent_bg = IM_COL32(accent.r, accent.g, accent.b, 216);
+    auto& input = platform::windows::bound_input();
+
+    float y = draw_min.y + pad;
+    for (const auto& entry : rows)
+    {
+        if (!entry.visible)
+            continue;
+
+        for (std::size_t i = 0; i < entry.count; ++i)
+        {
+            const auto& cap = entry.cells[i];
+            const auto x = draw_min.x + pad + static_cast<float>(cap.column) * (key_size + gap);
+            const auto width = static_cast<float>(cap.span) * key_size + static_cast<float>(cap.span - 1) * gap;
+            const auto down = game::physical_action_down(cap.action, input);
+            const ImVec2 cap_min{x, y};
+            const ImVec2 cap_max{x + width, y + key_size};
+
+            draw->AddRectFilled(cap_min, cap_max, down ? accent_bg : IM_COL32(255, 255, 255, 16), rounding);
+            draw->AddRect(cap_min, cap_max, down ? accent_bg : k_wm_border, rounding, ImDrawFlags_None,
+                          std::max(1.0f, metric_scale));
+
+            const auto label = binding_label(cap.action, cap.fallback);
+            auto text_size = base_font_size;
+            const auto natural = font->CalcTextSizeA(text_size, FLT_MAX, 0.0f, label.c_str());
+            const auto available = width - 6.0f * metric_scale;
+            if (natural.x > available && natural.x > 0.0f)
+                text_size *= available / natural.x;
+            const auto extent = font->CalcTextSizeA(text_size, FLT_MAX, 0.0f, label.c_str());
+            draw->AddText(font, text_size,
+                          {cap_min.x + (width - extent.x) * 0.5f, cap_min.y + (key_size - extent.y) * 0.5f},
+                          down ? k_wm_text : k_wm_muted, label.c_str());
+        }
+
+        y += key_size + gap;
+    }
 }
 
 } // namespace ui::hud

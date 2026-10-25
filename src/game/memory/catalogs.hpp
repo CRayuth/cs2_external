@@ -20,10 +20,21 @@ namespace game
 class variable_registry
 {
 public:
+    // One console variable found by a full walk of the live list. The address stays valid for the life of the
+    // process, exactly like the addresses behind find().
+    struct named_variable
+    {
+        std::string name{};
+        std::uintptr_t address{};
+    };
+
     // Binds the adapter to the process it reads; until then every lookup finds nothing.
     void bind(const memory_services& services) noexcept { m_services = &services; }
     // Address of the console variable with this name identity, 0 if it does not exist or the list is unreadable.
     [[nodiscard]] std::uintptr_t find(std::uint32_t name_id);
+    // Every console variable the game currently exposes, duplicates dropped. Empty when the list cannot be read.
+    // This walks the whole list, so it is meant for a user-triggered dump, not for a per-frame call.
+    [[nodiscard]] std::vector<named_variable> snapshot();
 
     template<typename T>
     [[nodiscard]] T get(std::uintptr_t cvar_ptr);
@@ -36,6 +47,7 @@ private:
     static constexpr std::chrono::seconds k_retry_interval{5};
 
     [[nodiscard]] std::unordered_map<std::uint32_t, std::uintptr_t> read_list() const;
+    [[nodiscard]] std::vector<named_variable> read_named_list() const;
 
     const memory_services* m_services{};
     std::mutex m_mutex{};

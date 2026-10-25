@@ -14,6 +14,7 @@
 #include <game/input/bindings.hpp>
 #include <game/input/action_state.hpp>
 #include <features/aimbot/aimbot.hpp>
+#include <features/aimbot/command_steering.hpp>
 #include <features/misc/misc.hpp>
 #include <features/misc/auto_stop.hpp>
 #include <features/misc/anti_flash.hpp>
@@ -22,6 +23,7 @@
 #include <simulation/shot_state.hpp>
 #include <simulation/seed_schedule.hpp>
 #include <features/visuals/visuals.hpp>
+#include <features/visuals/hitsound.hpp>
 
 namespace app::workers
 {
@@ -191,6 +193,9 @@ void game(control control)
         diagnostics::performance::flush_if_due();
         ++iterations;
         g_game_iter.store(iterations, std::memory_order_relaxed);
+        app::context().input.supervise_focus();
+        if (const auto snapshot = config::get_runtime_snapshot(); snapshot)
+            features::visuals::hitsounds().set_device(snapshot->general.m_hitsound.device_id());
 
         g_game_step.store(0, std::memory_order_relaxed);
         {
@@ -211,6 +216,10 @@ void game(control control)
         {
             VESTA_PERF_SCOPE(auto_accept);
             features::misc::auto_accept().tick();
+        }
+        {
+            VESTA_PERF_SCOPE(round_alert);
+            features::misc::round_alert().tick();
         }
 
         std::uintptr_t global_vars{0};
@@ -381,6 +390,12 @@ void combat(control control)
                 VESTA_PERF_SCOPE(grenade_aim_tick);
                 features::aimbot::grenade_aim().tick();
             }
+            {
+                // Apply a silent-aim request to the command being built. This runs right after the aim pass
+                // so the freshest approved angle is the one that lands, and it is a no-op when none is held.
+                VESTA_PERF_SCOPE(silent_aim_tick);
+                features::aimbot::command_steering().tick();
+            }
         }
         else
         {
@@ -417,6 +432,10 @@ void movement(control control)
                 features::misc::bhop().tick();
             }
             {
+                VESTA_PERF_SCOPE(speed_hack_tick);
+                features::misc::speed_hack().tick();
+            }
+            {
                 VESTA_PERF_SCOPE(auto_stop_tick);
                 features::misc::auto_stop().tick();
             }
@@ -428,11 +447,18 @@ void movement(control control)
                 VESTA_PERF_SCOPE(anti_flash_tick);
                 features::misc::anti_flash().tick();
             }
+            {
+                VESTA_PERF_SCOPE(automation_tick);
+                features::misc::automation().tick();
+            }
         }
         const auto snapshot = config::get_runtime_snapshot();
         const auto active =
             snapshot && (snapshot->general.m_bunny_hop.enabled || snapshot->general.m_edge_jump.enabled ||
-                         snapshot->general.m_auto_stop.enabled || features::misc::auto_stop().active());
+                         snapshot->general.m_speed_hack.enabled ||
+                         snapshot->general.m_auto_stop.enabled ||
+                         snapshot->general.m_automation.auto_pistol.enabled ||
+                         snapshot->general.m_automation.anti_afk.enabled || features::misc::auto_stop().active());
         control.sleep_for(active ? active_interval : idle_interval);
     }
 }

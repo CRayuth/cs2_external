@@ -122,7 +122,7 @@ void grenade_aim_t::find_target(const foundation::vec3& eye_pos, const foundatio
             continue;
         }
 
-        if (!player.bones.is_valid())
+        if (!player.bones.is_valid() || !player.bones.covers(static_cast<int>(game::rules::joint_id::head)))
             continue;
         const auto head = player.bones.get_position(game::rules::joint_id::head);
         const auto fov = foundation::angular_distance(view_angles, eye_pos, head);

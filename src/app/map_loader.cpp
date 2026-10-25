@@ -79,24 +79,7 @@ void map_loader::run(std::stop_token stop)
                     diagnostics::emit(diagnostics::event::map_geometry_cancelled);
                     continue;
                 }
-                if (simulation::collision().valid() && from_file)
-                {
-                    m_geometry.publish(job->serial, readiness::state::ready);
-                    diagnostics::emit(diagnostics::event::map_geometry_ready);
-                }
-                else if (simulation::collision().valid())
-                {
-                    // Geometry exists but did not come from the map files: wall checks may be wrong, so the player is told.
-                    m_geometry.publish(job->serial, readiness::state::ready, readiness::reason::geometry_partial);
-                    diagnostics::emit(diagnostics::event::map_geometry_live_fallback, diagnostics::severity::warning);
-                }
-                else
-                {
-                    // No usable geometry for this map: dependent features stay off and say why.
-                    m_geometry.publish(job->serial, readiness::state::waiting_dependency,
-                                       readiness::reason::geometry_missing);
-                    diagnostics::emit(diagnostics::event::map_geometry_unavailable, diagnostics::severity::warning);
-                }
+                publish_geometry(job->serial, from_file);
                 simulation::blast_model blast;
                 blast.parse(job->stop);
                 if (!m_queue.commit(job->stop, [&] { simulation::blast_damage().replace_with(blast); }))
@@ -118,6 +101,33 @@ void map_loader::run(std::stop_token stop)
                     simulation::collision().refresh_map_entities(job->stop);
                 }
             }
+            else if (!simulation::collision().valid())
+            {
+                // Nothing usable on the first try. A workshop map's files may still be landing on disk, and a
+                // freshly loaded round may not have committed its physics world when the map name first appears.
+                // Keep retrying on this map so penetration and wall checks recover on their own instead of
+                // staying off for the whole round; a newer map request cancels the job and ends the loop.
+                std::mutex wait_mutex;
+                std::condition_variable_any wake;
+                std::unique_lock wait_lock(wait_mutex);
+                while (!job->stop.stop_requested())
+                {
+                    wake.wait_for(wait_lock, job->stop, std::chrono::seconds(1), [] { return false; });
+                    if (job->stop.stop_requested())
+                        break;
+                    simulation::collision_world retry{};
+                    const bool built_from_file = retry.build_from_map_file(job->key, job->stop);
+                    if (!built_from_file && !job->stop.stop_requested())
+                        retry.parse(job->stop);
+                    if (!m_queue.commit(job->stop, [&] { simulation::collision().replace_with(retry); }))
+                        break;
+                    if (simulation::collision().valid())
+                    {
+                        publish_geometry(job->serial, built_from_file);
+                        break;
+                    }
+                }
+            }
         }
         catch (const std::exception&)
         {
@@ -133,6 +143,27 @@ void map_loader::run(std::stop_token stop)
     }
     if (background)
         ::SetThreadPriority(::GetCurrentThread(), THREAD_MODE_BACKGROUND_END);
+}
+
+void map_loader::publish_geometry(std::uint64_t serial, bool from_file)
+{
+    if (simulation::collision().valid() && from_file)
+    {
+        m_geometry.publish(serial, readiness::state::ready);
+        diagnostics::emit(diagnostics::event::map_geometry_ready);
+    }
+    else if (simulation::collision().valid())
+    {
+        // Geometry exists but did not come from the map files: wall checks may be wrong, so the player is told.
+        m_geometry.publish(serial, readiness::state::ready, readiness::reason::geometry_partial);
+        diagnostics::emit(diagnostics::event::map_geometry_live_fallback, diagnostics::severity::warning);
+    }
+    else
+    {
+        // No usable geometry for this map: dependent features stay off and say why.
+        m_geometry.publish(serial, readiness::state::waiting_dependency, readiness::reason::geometry_missing);
+        diagnostics::emit(diagnostics::event::map_geometry_unavailable, diagnostics::severity::warning);
+    }
 }
 
 } // namespace app

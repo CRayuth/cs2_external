@@ -42,4 +42,9 @@ imgui.ini
 /ref_*/
 /.ref_*/
 /tests/frida/
+/_wenum.cs
+
+# Vendored clones of other repositories used as a porting reference. Never part
+# of this source tree, and each one carries its own .git.
+/tmp/
 

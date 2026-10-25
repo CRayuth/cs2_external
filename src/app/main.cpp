@@ -110,6 +110,7 @@ int run(int argc, char** argv)
             return fail_startup(app::startup_failure::input_unavailable);
         }
         app::context().input.set_protected_keys(&config::is_lifecycle_key);
+        app::context().input.set_target_process(app::context().process.process_id());
         platform::windows::bind_input(app::context().input);
         diagnostics::emit(diagnostics::event::startup_input_ready);
     }

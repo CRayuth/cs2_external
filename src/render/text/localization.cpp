@@ -81,6 +81,18 @@ const std::unordered_map<std::string_view, const char*>& russian()
         {"Report failed", "Отчёт не сохранён"},
         {"Last session crashed", "Прошлый сеанс завершился сбоем"},
 
+        // --- game convar export and crosshair export ---------------------
+        {"Convars", "Конвары"},
+        {"Game convars saved", "Конвары игры сохранены"},
+        {"Game convars not saved", "Конвары игры не сохранены"},
+        {"No game convars found", "Конвары игры не найдены"},
+        {"Crosshair applied", "Прицел применён"},
+        {"Applied; some variables are missing", "Применено, часть переменных не найдена"},
+        {"Commands copied to clipboard", "Команды скопированы в буфер"},
+        {"Game process is read-only", "Процесс игры только для чтения"},
+        {"Apply writes cl_crosshair_* into the running game",
+         "Применение записывает cl_crosshair_* в запущенную игру"},
+
 
         // --- map geometry status ----------------------------------------
         // --- system notices (top-left plate) ----------------------------
@@ -260,6 +272,11 @@ const std::unordered_map<std::string_view, const char*>& russian()
         {"Outlier Chance", "Шанс выброса"},
         {"Outlier Delay", "Задержка выброса"},
         {"Lethal Only", "Только смертельный урон"},
+        {"Silent Aim", "Бесшумная цель"},
+        {"Silent Smoothness", "Плавность бесшумной"},
+        {"Steers the shot", "Ведёт выстрел"},
+        {"Input fallback: command ring unavailable", "Откат на мышь: кольцо команд недоступно"},
+        {"Input fallback: handle is read-only", "Откат на мышь: доступ к процессу только на чтение"},
         {"R8 Readiness", "Готовность R8"},
         {"Release Margin", "Запас отпускания"},
         {"Key", "Бинд"},

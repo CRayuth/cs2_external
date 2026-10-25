@@ -23,6 +23,7 @@ public:
     void draw_aimbot_status(bool interactive);
     void draw_flash_status(bool interactive);
     void draw_plant_alert(bool interactive);
+    void draw_keystrokes(bool interactive);
 
 private:
     // Samplers, drag state and animation kept between frames.

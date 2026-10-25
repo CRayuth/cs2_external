@@ -70,6 +70,7 @@ set(vesta_sources
     src/assets/resource.cpp
     src/assets/vpk.cpp
     src/assets/workshop_maps.cpp
+    src/resources/nades/nade_overlay.cpp
     src/game/input/bindings.cpp
 	 src/config/hotkeys.cpp
     src/platform/windows/input.cpp
@@ -116,6 +117,7 @@ set(vesta_sources
     src/features/aimbot/aimbot_trigger.cpp
     src/features/aimbot/aimbot_internal.cpp
     src/features/aimbot/command_ring.cpp
+    src/features/aimbot/command_steering.cpp
     src/features/aimbot/grenade_aim.cpp
     src/features/trigger/seed_trigger.cpp
     src/features/aimbot/seed_plan.cpp
@@ -123,6 +125,7 @@ set(vesta_sources
     src/features/visuals/bomb.cpp
     src/features/visuals/bullet_impacts.cpp
     src/features/visuals/crosshair.cpp
+    src/features/visuals/crosshair_game.cpp
 	 src/features/visuals/event_log.cpp
     src/features/visuals/grenade_prediction.cpp
 	src/features/visuals/hitsound.cpp
@@ -137,6 +140,11 @@ set(vesta_sources
     src/features/misc/bhop.cpp
     src/features/misc/flash_watch.cpp
     src/features/misc/nade_helper.cpp
+    src/features/misc/speed_hack.cpp
+    src/features/misc/automation.cpp
+    src/features/misc/round_alert.cpp
+    src/features/misc/convar_io.cpp
+    src/features/misc/config_backup.cpp
 
     # render
     src/features/chams/animation.cpp
@@ -163,6 +171,7 @@ set(vesta_sources
     src/ui/menu/library_widgets.cpp
     src/ui/menu/guide_page.cpp
     src/platform/windows/open_folder.cpp
+    src/platform/windows/clipboard.cpp
     src/platform/windows/user_settings.cpp
     src/render/presentation.cpp
     src/ui/presentation.cpp

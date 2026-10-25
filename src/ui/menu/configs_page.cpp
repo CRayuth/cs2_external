@@ -1,7 +1,9 @@
 #include <stdafx.hpp>
 #include <config/library.hpp>
+#include <features/misc/config_backup.hpp>
 #include <platform/windows/data_paths.hpp>
 #include <platform/windows/open_folder.hpp>
+#include <platform/windows/storage.hpp>
 #include <render/fonts.hpp>
 #include <render/presentation.hpp>
 #include <render/text/localization.hpp>
@@ -83,13 +85,28 @@ void save_new()
         g_page.new_name[0] = '\0';
 }
 
-constexpr std::array<const char*, 3> k_header_labels{"Import", "Open folder", "Change folder"};
+constexpr std::array<const char*, 4> k_header_labels{"Import", "Convars", "Open folder", "Change folder"};
 
 [[nodiscard]] float header_width()
 {
     return small_button_width(k_header_labels[0], glyph::import) +
-           small_button_width(k_header_labels[1], glyph::folder) + small_button_width(k_header_labels[2], glyph::none) +
-           16.0f;
+           small_button_width(k_header_labels[1], glyph::none) +
+           small_button_width(k_header_labels[2], glyph::folder) +
+           small_button_width(k_header_labels[3], glyph::none) + 24.0f;
+}
+
+// Turns the live console variables into a CS2 cfg next to the saved configs, so a profile can carry the in-game
+// settings it was tuned for.
+void backup_convars()
+{
+    const auto folder = config::library().folder();
+    const auto target = folder ? *folder : platform::windows::runtime_storage::paths().configs;
+    const auto result = features::misc::write_convar_backup(target);
+    if (result.ok)
+        g_page.result.raise({}, "Game convars saved", false);
+    else
+        g_page.result.raise({}, result.variable_count == 0 ? "No game convars found" : "Game convars not saved",
+                            true);
 }
 
 void header_actions()
@@ -98,12 +115,18 @@ void header_actions()
     ImGui::BeginDisabled(!has_folder);
     if (small_button("##import", glyph::import, k_header_labels[0]))
         bound_overlay().request_file(ui::overlay_t::file_request::import_config);
+    ImGui::EndDisabled();
     ImGui::SameLine(0.0f, 8.0f);
-    if (small_button("##open_folder", glyph::folder, k_header_labels[1]) && has_folder)
+    // A convar dump needs no config folder: without one it lands in the default configs directory.
+    if (small_button("##backup_convars", glyph::none, k_header_labels[1]))
+        backup_convars();
+    ImGui::SameLine(0.0f, 8.0f);
+    ImGui::BeginDisabled(!has_folder);
+    if (small_button("##open_folder", glyph::folder, k_header_labels[2]) && has_folder)
         static_cast<void>(platform::windows::open_folder(*config::library().folder()));
     ImGui::EndDisabled();
     ImGui::SameLine(0.0f, 8.0f);
-    if (small_button("##change_folder", glyph::none, k_header_labels[2]))
+    if (small_button("##change_folder", glyph::none, k_header_labels[3]))
         bound_overlay().request_file(ui::overlay_t::file_request::choose_config_folder);
 }
 

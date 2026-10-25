@@ -8,6 +8,11 @@ namespace features::aimbot
 void aimbot_t::recoil_control(const config::combat_profile::aimbot& cfg, bool defer_input)
 {
     VESTA_PERF_SCOPE(aim_recoil);
+    // The transport is settled once per pass, here rather than inside the aim pass, because the flush at the
+    // bottom of this function also runs when no target was found and aimbot() was never reached. defer_input
+    // is the aimbot's own "this pass publishes to the command" signal: without it a recoil-only profile would
+    // have its mouse compensation suppressed while nothing is ever published to replace it.
+    m_silent_transport = cfg.silent && defer_input && command_steering().healthy();
     const auto clear_correction = [this](bool clear_burst)
     {
         m_rcs_raw = {};
@@ -179,6 +184,15 @@ void aimbot_t::recoil_control(const config::combat_profile::aimbot& cfg, bool de
 void aimbot_t::flush_recoil_input()
 {
     VESTA_PERF_SCOPE(aim_flush);
+    if (m_silent_transport)
+    {
+        // The compensation is carried as degrees inside the published command angle. Injecting the pixel
+        // accumulator here as well would turn the camera, and the next pass samples that turned angle and adds
+        // the accumulated compensation to it again: the view then walks to a different angle on every pass of
+        // the burst. The owed degrees are already in the command, so the accumulator is simply spent.
+        m_rcs_pending_mouse = {};
+        return;
+    }
     const auto limit = std::max(m_rcs_input_step, 1);
     const auto dx = std::clamp(static_cast<int>(m_rcs_pending_mouse.x), -limit, limit);
     const auto dy = std::clamp(static_cast<int>(m_rcs_pending_mouse.y), -limit, limit);
@@ -228,9 +242,18 @@ void aimbot_t::aimbot(const foundation::vec3& eye_pos, const foundation::vec3& v
     {
         return;
     }
+    // Silent aim replaces the transport only. Every decision below is still taken against the angle the
+    // shot leaves at, which with a silent transport is the control angle destined for the command ring.
+    // healthy(), not just available(): a writable handle that cannot resolve the ring would otherwise leave
+    // the aim pass suppressing the mouse and steering nothing, while still reporting that it aims silently.
+    const auto silent = cfg.silent && command_steering().healthy();
+    if (!silent)
+        command_steering().clear();
     if (local_checks_blocked(cfg.checks) ||
         live_target_invulnerable(tgt.player ? tgt.player->pawn : 0, tgt.player ? tgt.player->invulnerable : true))
     {
+        if (silent)
+            command_steering().clear();
         return;
     }
     const auto sensitivity = game::variables().get<float>(CONVAR("sensitivity"_id));
@@ -293,7 +316,7 @@ void aimbot_t::aimbot(const foundation::vec3& eye_pos, const foundation::vec3& v
 
     // Reconstruct the picked point from the freshest complete bone transform.
     auto aim_point = tgt.aim_point;
-    if (tgt.bone >= 0 && tgt.bone < 128)
+    if (freshest.covers(tgt.bone))
     {
         const auto& fresh_bone = freshest.bones[tgt.bone];
         const auto rotation_norm =
@@ -331,6 +354,41 @@ void aimbot_t::aimbot(const foundation::vec3& eye_pos, const foundation::vec3& v
         sampled_control_angles.x += m_rcs_pending_mouse.y * deg_per_pixel;
         sampled_control_angles.y -= m_rcs_pending_mouse.x * deg_per_pixel;
         sampled_control_angles.y = foundation::wrap_yaw(sampled_control_angles.y);
+    }
+    // Is the compensation above already inside the command the game built, or still owed by it? The two
+    // answers need opposite terms, and nothing in this repository settles which is which, so measure it: while
+    // the aim is delivered as mouse input, the command angle and the rendered angle are the same quantity only
+    // if the injected moves reach the command. A ratio near zero proves the term above double counts; a ratio
+    // near -1 means the command carries no punch at all and the term has to stay. Silent aim is excluded
+    // because there the command angle is the one this feature wrote itself.
+    if (!silent && command_angles_valid && m_rcs_active && std::abs(m_rcs_raw.x) > 0.5f)
+    {
+        m_rcs_probe_gap_sum += raw_angles.x - view_angles.x;
+        m_rcs_probe_punch_sum += m_rcs_raw.x;
+        ++m_rcs_probe_samples;
+        if (m_rcs_probe_samples >= 16 && m_rcs_probe_note.allow(now))
+        {
+            if (std::abs(m_rcs_probe_punch_sum) >= 1.0f)
+            {
+                // "rcs.transport_probe" code_domain::mode word. Both halves are biased by 32768 and scaled by
+                // 100, so a reader recovers them as (int16)(half - 32768) / 100:
+                //   bits  0..15 (command pitch - rendered pitch) / punch pitch, clamped to +-3
+                //   bits 16..31 the mean aim punch pitch over the window, in degrees
+                const auto ratio = std::clamp(m_rcs_probe_gap_sum / m_rcs_probe_punch_sum, -3.0f, 3.0f);
+                const auto mean_punch =
+                    std::clamp(m_rcs_probe_punch_sum / static_cast<float>(m_rcs_probe_samples), -300.0f, 300.0f);
+                const auto packed_ratio =
+                    static_cast<std::uint32_t>(static_cast<std::int32_t>(ratio * 100.0f) + 32768);
+                const auto packed_punch =
+                    static_cast<std::uint32_t>(static_cast<std::int32_t>(mean_punch * 100.0f) + 32768);
+                diagnostics::emit(diagnostics::event::rcs_transport_probe, diagnostics::severity::information,
+                                  diagnostics::code_domain::mode, packed_ratio | (packed_punch << 16),
+                                  diagnostics::subject::combat);
+            }
+            m_rcs_probe_gap_sum = {};
+            m_rcs_probe_punch_sum = {};
+            m_rcs_probe_samples = 0;
+        }
     }
     if (!m_aim_virtual_angles_valid || stale_control)
     {
@@ -413,7 +471,19 @@ void aimbot_t::aimbot(const foundation::vec3& eye_pos, const foundation::vec3& v
     const auto command_fraction = std::clamp(dt / game::rules::simulation_step, 0.01f, 4.0f);
     const auto response_alpha =
         command_response >= 1.0f ? 1.0f : 1.0f - std::pow(1.0f - command_response, command_fraction);
-    const auto prediction_response = std::clamp(response_alpha * overshoot_response, 0.001f, 1.0f);
+    // How much of the remaining angle reaches the next command. Mouse aim is shaped by the smoothing slider so the
+    // camera glides, but a silent write never moves the camera: reusing that response there only postpones the
+    // angle the shot leaves on. Silent aim therefore has its own slider, where 0 spends the whole remaining step
+    // every command and the humanizer step cap below still decides how far one command may turn.
+    const auto silent_factor = static_cast<float>(std::clamp(cfg.silent_smoothing, 0, 10));
+    const auto silent_alpha = silent_factor >= 1.0f
+                                  ? 1.0f - std::pow(1.0f - 1.0f / silent_factor, command_fraction)
+                                  : 1.0f;
+    const auto arrival_alpha = silent ? silent_alpha : response_alpha;
+    // Tracking lag compensates how long the control angle takes to arrive, so it follows the same response
+    // instead of the mouse one: predicting a smoothed arrival the silent slider no longer has would aim far
+    // past a moving target instead of slightly ahead of it.
+    const auto prediction_response = std::clamp(arrival_alpha * overshoot_response, 0.001f, 1.0f);
 
     if (cfg.prediction.enabled)
     {
@@ -506,9 +576,12 @@ void aimbot_t::aimbot(const foundation::vec3& eye_pos, const foundation::vec3& v
         m_aim_velocity_samples = 0;
     }
     // Prediction is allowed to refine the selected solution, but it may not pull
-    // the input outside the FOV policy that selected this target.
-    if (get_fov(view_angles, eye_pos, aim_point) > selection_fov(cfg, eye_pos, aim_point))
+    // the input outside the FOV policy that selected this target. The policy is about the angle the
+    // shot leaves at, so a silent transport is measured against the control angle, not the camera.
+    if (get_fov(silent ? control_angles : view_angles, eye_pos, aim_point) > selection_fov(cfg, eye_pos, aim_point))
     {
+        if (silent)
+            command_steering().clear();
         return;
     }
     if (h > 0.0f)
@@ -526,8 +599,8 @@ void aimbot_t::aimbot(const foundation::vec3& eye_pos, const foundation::vec3& v
             wander_amp * 0.7f * std::cos(m_aim_wander_phase * 1.3f) + micro_amp * std::cos(m_aim_wander_phase * 1.47f);
     }
 
-    delta_x *= response_alpha;
-    delta_y *= response_alpha;
+    delta_x *= arrival_alpha;
+    delta_y *= arrival_alpha;
     const auto max_step = std::clamp(cfg.humanizer.max_step, 1.0f, 90.0f);
     const auto sampled_max_step = max_step * command_fraction;
     const auto step_length = std::sqrt(delta_x * delta_x + delta_y * delta_y);
@@ -573,58 +646,92 @@ void aimbot_t::aimbot(const foundation::vec3& eye_pos, const foundation::vec3& v
     const auto dy = snap ? static_cast<int>(std::lround(accumulated_y)) : static_cast<int>(accumulated_y);
     const foundation::vec2 remainder{snap ? 0.0f : accumulated_x - static_cast<float>(dx),
                                      snap ? 0.0f : accumulated_y - static_cast<float>(dy)};
-    if (dx == 0 && dy == 0 && std::abs(m_rcs_pending_mouse.x) < 1.0f && std::abs(m_rcs_pending_mouse.y) < 1.0f)
+    const auto needs_input = dx != 0 || dy != 0 || std::abs(m_rcs_pending_mouse.x) >= 1.0f ||
+                             std::abs(m_rcs_pending_mouse.y) >= 1.0f;
+    // A silent transport republishes on every pass, not only on the passes that owe the mouse a whole
+    // pixel. The camera never follows the control angle, so stopping the writes once the remaining step
+    // drops below one pixel would leave the settled shots travelling along the player's view.
+    if (!needs_input && !silent)
     {
         m_aim_error = remainder;
         return;
     }
 
-    if (dx != 0 || dy != 0 || std::abs(m_rcs_pending_mouse.x) >= 1.0f || std::abs(m_rcs_pending_mouse.y) >= 1.0f)
+    if (needs_input || silent)
     {
-        if (!config::combat_profile::activation_active(cfg.activation_mode, cfg.key) ||
-            local_checks_blocked(cfg.checks) ||
-            live_target_invulnerable(tgt.player ? tgt.player->pawn : 0, tgt.player ? tgt.player->invulnerable : true) ||
-            (cfg.checks.smoke && line_through_smoke(eye_pos, aim_point)))
+        // These are the conditions a mouse move used to have to satisfy. A silent write is the same
+        // decision about a different transport, so it is refused for exactly the same reasons.
+        const auto shot_approved = [&]() -> bool
         {
-            return;
-        }
-        const auto live_visible =
-            !simulation::collision().valid() || !simulation::collision().trace_ray(eye_pos, aim_point).hit;
-        if (!live_visible)
-        {
+            if (!config::combat_profile::activation_active(cfg.activation_mode, cfg.key) ||
+                local_checks_blocked(cfg.checks) ||
+                live_target_invulnerable(tgt.player ? tgt.player->pawn : 0,
+                                         tgt.player ? tgt.player->invulnerable : true) ||
+                (cfg.checks.smoke && line_through_smoke(eye_pos, aim_point)))
+                return false;
+            const auto live_visible =
+                !simulation::collision().valid() || !simulation::collision().trace_ray(eye_pos, aim_point).hit;
+            if (live_visible)
+                return true;
             if (cfg.checks.walls == config::combat_profile::wall_policy::block)
-                return;
-            if (cfg.checks.walls == config::combat_profile::wall_policy::penetration)
-            {
-                ballistics_t::penetration::result penetration{};
-                if (!simulation::ballistics().pen().run(eye_pos, aim_point, *tgt.player, freshest, penetration) ||
-                    penetration.damage < cfg.min_damage)
-                    return;
-            }
+                return false;
+            if (cfg.checks.walls != config::combat_profile::wall_policy::penetration)
+                return true;
+            ballistics_t::penetration::result penetration{};
+            return simulation::ballistics().pen().run(eye_pos, aim_point, *tgt.player, freshest, penetration) &&
+                   penetration.damage >= cfg.min_damage;
+        };
+        if (!shot_approved())
+        {
+            // Pull the request down with its approval rather than letting it ride out its 40 ms life and
+            // keep steering commands towards a target that has just become hidden, invulnerable or blocked.
+            if (silent)
+                command_steering().clear();
+            return;
         }
         const auto rcs_limit = std::max(m_rcs_input_step, 1);
         const auto rcs_dx = std::clamp(static_cast<int>(m_rcs_pending_mouse.x), -rcs_limit, rcs_limit);
         const auto rcs_dy = std::clamp(static_cast<int>(m_rcs_pending_mouse.y), -rcs_limit, rcs_limit);
-        if (platform::windows::bound_input().pointer(dx + rcs_dx, dy + rcs_dy,
-                                                     platform::windows::pointer_action::relative_move))
+
+        // The step the camera would have turned through. Silent aim writes exactly this angle into the
+        // command instead of sending it as mouse input, so it carries float degrees rather than the
+        // pixel-rounded ones and needs no accumulated sub-pixel remainder.
+        const auto applied_pitch = silent ? delta_x : static_cast<float>(dy) * deg_per_pixel;
+        const auto applied_yaw = silent ? delta_y : -static_cast<float>(dx) * deg_per_pixel;
+        if (silent)
+            command_steering().publish({control_angles.x + delta_x, foundation::wrap_yaw(control_angles.y + delta_y),
+                                        0.0f});
+        const auto send_dx = silent ? 0 : dx + rcs_dx;
+        const auto send_dy = silent ? 0 : dy + rcs_dy;
+        const auto needs_move = send_dx != 0 || send_dy != 0;
+        if (needs_move &&
+            !platform::windows::bound_input().pointer(send_dx, send_dy,
+                                                      platform::windows::pointer_action::relative_move))
+            return;
+
+        m_aim_error = silent ? foundation::vec2{} : remainder;
+        // The accumulator models the control angle. Pitch is bounded like the command field the value ends up in:
+        // a fast eye-height change (crouch, duck) can ask for more than vertical, and an unbounded accumulator
+        // would keep climbing while every published angle sat pinned at the clamp.
+        m_aim_virtual_angles.x = std::clamp(m_aim_virtual_angles.x + applied_pitch, -89.0f, 89.0f);
+        m_aim_virtual_angles.y = foundation::wrap_yaw(m_aim_virtual_angles.y + applied_yaw);
+        if (applied_pitch != 0.0f || applied_yaw != 0.0f || send_dx != 0 || send_dy != 0)
         {
-            m_aim_error = remainder;
-            m_aim_virtual_angles.x += static_cast<float>(dy) * deg_per_pixel;
-            m_aim_virtual_angles.y =
-                foundation::wrap_yaw(m_aim_virtual_angles.y - static_cast<float>(dx) * deg_per_pixel);
-            if (dx + rcs_dx || dy + rcs_dy)
-            {
-                if (m_aim_pending_since.time_since_epoch().count() == 0)
-                    m_aim_pending_since = now;
-                m_aim_sent_since_sample.x += static_cast<float>(dy + rcs_dy) * deg_per_pixel;
-                m_aim_sent_since_sample.y -= static_cast<float>(dx + rcs_dx) * deg_per_pixel;
-            }
-            m_aim_last_input_sequence = input_sequence;
-            m_rcs_last_input_sequence = input_sequence;
-            m_rcs_last_input_time = now;
-            m_rcs_pending_mouse.x -= static_cast<float>(rcs_dx);
-            m_rcs_pending_mouse.y -= static_cast<float>(rcs_dy);
+            if (m_aim_pending_since.time_since_epoch().count() == 0)
+                m_aim_pending_since = now;
+            // Under silent transport the recoil step never reaches the mouse, so the only thing sent was the
+            // published angle. Counting the pixel step here too would tell the reconciler the camera turned
+            // twice and leave it correcting a turn that never happened.
+            const auto sent_rcs_pitch = silent ? 0.0f : static_cast<float>(rcs_dy) * deg_per_pixel;
+            const auto sent_rcs_yaw = silent ? 0.0f : -static_cast<float>(rcs_dx) * deg_per_pixel;
+            m_aim_sent_since_sample.x += applied_pitch + sent_rcs_pitch;
+            m_aim_sent_since_sample.y += applied_yaw + sent_rcs_yaw;
         }
+        m_aim_last_input_sequence = input_sequence;
+        m_rcs_last_input_sequence = input_sequence;
+        m_rcs_last_input_time = now;
+        m_rcs_pending_mouse.x -= static_cast<float>(rcs_dx);
+        m_rcs_pending_mouse.y -= static_cast<float>(rcs_dy);
     }
 }
 

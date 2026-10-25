@@ -3,8 +3,23 @@
 
 namespace features::aimbot
 {
+// The overlay's exit key calls this on the render thread while the combat worker is inside tick(); the worker
+// also calls it itself when the pass goes inactive. The serialises against tick() so neither can observe the
+// other halfway through a state change, which is what used to lose a trigger release.
 void aimbot_t::reset()
 {
+    std::scoped_lock lock(m_state_mutex);
+    reset_state();
+}
+
+void aimbot_t::reset_state()
+{
+    // Nothing is aiming any more: a held silent-aim request must not keep steering commands through a death,
+    // a map change or the menu.
+    command_steering().clear();
+    // Idle is the right moment to forgive a ring that would not resolve: the next acquisition gets a fresh
+    // silent trial instead of being locked to the mouse for the rest of the session.
+    command_steering().rearm();
     if (m_revolver_pre_cock_down)
     {
         platform::windows::bound_input().pointer(0, 0, platform::windows::pointer_action::primary_up);
@@ -174,6 +189,8 @@ void aimbot_t::cancel_scheduled_trigger()
 
 void aimbot_t::reset_aim_tracking()
 {
+    command_steering().clear();
+    command_steering().rearm();
     m_aim_error = {};
     m_aim_last_input_sequence = -1;
     m_aim_virtual_angles_valid = false;
@@ -252,7 +269,7 @@ void aimbot_t::publish_indicator(const config::combat_profile::aimbot& cfg, cons
     if (!picked.player)
         return;
     auto point = picked.aim_point;
-    if (picked.bone >= 0 && picked.bone < 128 && picked.bones.is_valid())
+    if (picked.bones.covers(picked.bone) && picked.bones.is_valid())
     {
         const auto& bone = picked.bones.bones[picked.bone];
         point = bone.position + bone.rotation.apply(picked.aim_offset);
@@ -265,6 +282,31 @@ void aimbot_t::publish_indicator(const config::combat_profile::aimbot& cfg, cons
     m_indicator_bone_cache = picked.player->bone_cache;
     m_indicator_bone = picked.bone;
     m_indicator_offset = picked.aim_offset;
+
+    // The ring is drawn around the angle the shots travel to. While the aim goes into the command rather than
+    // to the mouse the camera never follows that angle, so a ring centred on the screen would frame whatever
+    // the player is looking at instead of the target. Anchor it on the threat: the head joint itself for a
+    // head lock, so the ring sits exactly on the head and not on whichever multipoint the aim chose, and the
+    // aim point for any other hitgroup, because a chest lock genuinely shoots at the chest.
+    m_indicator_silent_ring = false;
+    if (cfg.silent && command_steering().healthy())
+    {
+        auto centre = point;
+        const auto head_joint = static_cast<int>(game::rules::joint_id::head);
+        // The aim path records the chosen hitbox, not a hitgroup, so read the group back off the threat's own
+        // hitbox table before deciding whether this is a head lock.
+        const auto hitgroup = picked.hitbox >= 0 ? game::hitbox_data().hitgroup_from_hitbox(picked.hitbox)
+                                                 : picked.hitgroup;
+        if (hitgroup == game::rules::hitgroup::head && picked.bones.covers(head_joint) &&
+            picked.bones.is_valid())
+            centre = picked.bones.get_position(static_cast<std::uint32_t>(head_joint));
+        if (std::isfinite(centre.x) && std::isfinite(centre.y) && std::isfinite(centre.z) &&
+            centre.length_sqr() > 0.0f)
+        {
+            m_indicator_ring_center = centre;
+            m_indicator_silent_ring = true;
+        }
+    }
 }
 
 // Chooses the aim target, reusing the last choice for the same world sample within 16 ms, and steers towards it.
@@ -274,6 +316,9 @@ bool aimbot_t::select_and_aim(const combat_frame& frame, const config::combat_pr
 {
     if (local_checks_blocked(cfg.aimbot.checks))
     {
+        // A blocked frame aims nothing, so the request from the last one must not ride out its TTL: a jump or
+        // a flash would otherwise fire the next commands along the angle chosen on the ground.
+        command_steering().clear();
         m_aim_pawn = 0;
         m_aim_selection_world.reset();
         m_aim_selection_target = {};
@@ -287,11 +332,25 @@ bool aimbot_t::select_and_aim(const combat_frame& frame, const config::combat_pr
     const auto can_reuse = m_aim_selection_world == frame.targets && m_aim_selection_weapon == frame.weapon.weapon &&
                            selection_now - m_aim_selection_at < reuse_window &&
                            (m_aim_selection_target.player || view_delta < 0.5f);
+    // Silent aim keeps the camera exactly where the player left it, so a reference taken from the view drops
+    // the target as soon as it walks out of a crosshair the aim pass no longer moves. Selection and the aim
+    // pass then disagree, and the pair cycles acquire and release for every tick of a burst. Judge selection by
+    // the angle the shot actually leaves at while a target is already held, and by the camera to acquire the
+    // first one, so silent aim still cannot reach outside the view cone to start with.
+    const auto max_silent_turn = std::clamp(cfg.aimbot.silent_max_turn, 5.0f, 35.0f);
+    auto selection_reference = frame.view_angles;
+    if (cfg.aimbot.silent && command_steering().healthy() && m_aim_pawn != 0 && m_aim_virtual_angles_valid)
+    {
+        const auto turned = std::hypot(m_aim_virtual_angles.x - frame.view_angles.x,
+                                       foundation::wrap_yaw(m_aim_virtual_angles.y - frame.view_angles.y));
+        if (std::isfinite(turned) && turned <= max_silent_turn)
+            selection_reference = m_aim_virtual_angles;
+    }
     auto selected_target =
-        can_reuse ? m_aim_selection_target : choose_target(frame.eye, frame.view_angles, *frame.targets, cfg);
+        can_reuse ? m_aim_selection_target : choose_target(frame.eye, selection_reference, *frame.targets, cfg);
     if (selected_target.player)
     {
-        selected_target.fov = get_fov(frame.view_angles, frame.eye, selected_target.aim_point);
+        selected_target.fov = get_fov(selection_reference, frame.eye, selected_target.aim_point);
         if (selected_target.fov > selection_fov(cfg.aimbot, frame.eye, selected_target.aim_point))
             selected_target = {};
     }
@@ -319,10 +378,20 @@ bool aimbot_t::select_and_aim(const combat_frame& frame, const config::combat_pr
     }
     if (selected_target.player)
         aimbot(frame.eye, frame.view_angles, selected_target, cfg.aimbot);
+    else
+        // The aim pass is not reached without a target, so the request is withdrawn here rather than left
+        // to expire: commands built after the target is gone must carry the player's own angles.
+        command_steering().clear();
     return true;
 }
 
 void aimbot_t::tick()
+{
+    std::scoped_lock lock(m_state_mutex);
+    tick_state();
+}
+
+void aimbot_t::tick_state()
 {
     refresh_runtime_config();
     const auto ctx = ballistics().ctx();
@@ -330,7 +399,7 @@ void aimbot_t::tick()
     {
         // The game time went backwards: a new match or map.
         if (ctx.current_time < m_last_time - 0.5f)
-            reset();
+            reset_state();
         m_last_time = ctx.current_time;
     }
 
@@ -400,7 +469,10 @@ void aimbot_t::tick()
     }
 
     if (!ctx.valid)
+    {
+        command_steering().clear();
         return;
+    }
 
     const auto cfg = runtime_config()->combat.get(ctx.weapon_type);
     const auto pawn = game::local_player().pawn();
@@ -411,11 +483,19 @@ void aimbot_t::tick()
 #endif
 
     if (!game::rules::is_firearm(ctx.weapon_type))
+    {
+        // The same withdrawal the no-target case makes, for the case that matters most: the aim key is still
+        // held while the player switches to a grenade or the knife, and the throw command is built from here on.
+        command_steering().clear();
         return;
+    }
     const auto visualization_only =
         dynamic_fov_visualization_requested && !aimbot_requested && !trigger_requested && !m_trigger_held;
     if (visualization_only && now < m_next_visual_scan)
+    {
+        command_steering().clear();
         return;
+    }
 
     combat_frame frame{};
     frame.sequence = ++m_combat_sequence;
@@ -430,6 +510,7 @@ void aimbot_t::tick()
     frame.targets = game::world().players();
     if (!frame.targets)
     {
+        command_steering().clear();
         flush_recoil_input();
         return;
     }
@@ -453,9 +534,13 @@ void aimbot_t::tick()
         m_next_visual_scan = std::chrono::steady_clock::now() + std::chrono::milliseconds(33);
     }
     if (visualization_only)
+    {
+        command_steering().clear();
         return;
+    }
     if (ctx.is_reloading || ctx.clip == 0)
     {
+        command_steering().clear();
         cancel_scheduled_trigger();
         flush_recoil_input();
         return;

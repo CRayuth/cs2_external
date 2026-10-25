@@ -4,6 +4,7 @@
 #include <game/memory/memory_services.hpp>
 #include <features/misc/input_lifecycle.hpp>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <iosfwd>
 #include <memory>
@@ -36,6 +37,22 @@ private:
 
     using owned_control = input_lifecycle::owned_control;
 
+    // Tick progress for one throw phase. Tick counts only ever accumulate
+    // forward increments, and a phase additionally has to have lasted its
+    // authored wall-clock span, so a server tick-base correction can neither
+    // truncate a run-up nor stretch it past the recorded movement.
+    struct phase_clock
+    {
+        std::uint32_t anchor{};
+        std::uint32_t elapsed{};
+        bool anchored{};
+        std::chrono::steady_clock::time_point started{};
+
+        void reset(std::uint32_t tick, std::chrono::steady_clock::time_point now);
+        void advance(std::uint32_t tick);
+        [[nodiscard]] bool reached(std::uint32_t ticks, std::chrono::steady_clock::time_point now) const;
+    };
+
     // Detached copy of one table row. Strings point into the generated
     // constexpr table, so they outlive any use of this struct.
     struct lineup_view
@@ -53,9 +70,28 @@ private:
         float distance{};
     };
 
+    // What one pass found about the held grenade type on this map, so the helper can name why the
+    // screen is empty instead of leaving it to look broken.
+    enum class lineup_availability : std::uint8_t
+    {
+        unavailable, // nothing to report: no level, or no grenade held
+        matched,     // records of this type are within the draw radius
+        unknown_map, // the level is not in the lineup database, and no custom file claimed it
+        no_records,  // the table matched but holds nothing of this type anywhere on the map
+        out_of_range,// records of this type exist, every one of them beyond the draw radius
+    };
+
+    struct lineup_inventory
+    {
+        lineup_availability status{lineup_availability::unavailable};
+        std::size_t in_range{};
+        std::size_t out_of_range{};
+    };
+
     // Pure with respect to feature state: both the render and combat threads
     // call it so their idea of "nearest lineup" cannot drift apart.
-    [[nodiscard]] bool collect(const foundation::vec3& player_pos, std::vector<lineup_view>& out) const;
+    [[nodiscard]] bool collect(const foundation::vec3& player_pos, std::vector<lineup_view>& out,
+                               lineup_inventory& inventory) const;
     [[nodiscard]] static std::uint8_t resolve_kind(std::uintptr_t weapon_vdata);
     // Index of the lineup nearest the crosshair among those armed at the
     // player's current stand point, or -1 when none are.
@@ -88,6 +124,10 @@ private:
 
     void draw_plaque(render::draw::draw_list& draw_list, const lineup_view& lineup,
                      const foundation::vec2& screen) const;
+    // One bottom-centre line naming why the map looks empty: no record of this type, or records the
+    // draw radius is hiding. Without it a thin list is indistinguishable from a broken helper.
+    void draw_inventory_notice(render::draw::draw_list& draw_list, const lineup_inventory& inventory,
+                               float radius) const;
     void draw_stand_marker(render::draw::draw_list& draw_list, const lineup_view& lineup, bool standing) const;
     void draw_aim_guidance(render::draw::draw_list& draw_list, const lineup_view& lineup,
                            const foundation::vec3& eye_pos, bool selected, bool converged) const;
@@ -108,8 +148,8 @@ private:
     std::uintptr_t m_active_pawn{};
     std::uintptr_t m_active_weapon{};
     std::uint32_t m_phase_tick{};
-    std::uint32_t m_run_start_tick{};
-    std::uint32_t m_jump_tick{};
+    phase_clock m_run_clock{};
+    phase_clock m_jump_clock{};
     std::chrono::steady_clock::time_point m_phase_started{};
     std::chrono::steady_clock::time_point m_lock_started{};
     std::chrono::steady_clock::time_point m_last_aim_update{};
@@ -216,6 +256,56 @@ private:
     std::chrono::steady_clock::time_point m_last_transition{};
 };
 
+// Rewrites m_flMaxspeed on the local pawn while the Speed Hack activation key is held. The engine
+// recomputes the field every tick from walk / duck / weapon / air state, so the pass samples the fresh
+// game value and rewrites it, letting the multiplier ride on top of whatever speed the player has
+// earned. When the key is released, or when the pawn is not alive or the process handle is read-only,
+// nothing is written and the engine's own value stands.
+class speed_hack_t
+{
+public:
+    void tick();
+
+private:
+    // Tracks the engine's own value between writes. On a tick where the read value differs from what
+    // we last wrote, the engine must have recomputed speed and the new reading becomes the fresh
+    // baseline; on a tick where it still equals our write, we reuse the last baseline so the
+    // multiplier is not compounded on top of itself.
+    float m_baseline{};
+    float m_last_written{};
+    std::uintptr_t m_pawn{};
+    // One-shot reports: each flag flips the first time the matching diagnostic path is taken, so a
+    // broken field lookup or a blocked write is visible in the log once instead of 250 times a second.
+    bool m_reported_offset{};
+    bool m_reported_first_write{};
+    bool m_reported_missing_field{};
+    bool m_reported_readonly{};
+    bool m_reported_store_failed{};
+};
+
+// Automation that presses the player's own bound keys. Both cycles are edge-driven: the movement worker calls
+// tick() at 1 ms, and each cycle is a press timestamp plus a gate, so nothing here sleeps or holds a key across
+// a menu, a chat box or the user's own press.
+class automation_t
+{
+public:
+    void tick();
+
+private:
+    void tick_auto_pistol();
+    void tick_anti_afk();
+    [[nodiscard]] bool injection_allowed() const;
+
+    bool m_trigger_down{};
+    std::chrono::steady_clock::time_point m_trigger_stamp{};
+    std::chrono::steady_clock::time_point m_next_shot{};
+
+    bool m_afk_down{};
+    std::chrono::steady_clock::time_point m_afk_stamp{};
+    std::chrono::steady_clock::time_point m_afk_due{};
+    bool m_afk_armed{};
+};
+
 inline nade_helper_t& nade_helper()
 {
     static nade_helper_t value{};
@@ -229,6 +319,34 @@ inline auto_accept_t& auto_accept()
 inline bhop_t& bhop()
 {
     static bhop_t value{};
+    return value;
+}
+inline speed_hack_t& speed_hack()
+{
+    static speed_hack_t value{};
+    return value;
+}
+inline automation_t& automation()
+{
+    static automation_t value{};
+    return value;
+}
+
+// Spawn alert. The local player's dead-to-alive edge is the only round-start signal the game exposes without a
+// round-phase field, so the first sample after binding only seeds the edge and never plays.
+class round_alert_t
+{
+public:
+    void tick();
+
+private:
+    bool m_primed{};
+    bool m_was_alive{};
+};
+
+inline round_alert_t& round_alert()
+{
+    static round_alert_t value{};
     return value;
 }
 

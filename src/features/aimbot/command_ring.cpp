@@ -13,6 +13,12 @@ constexpr std::uintptr_t k_slot_size{152};
 constexpr std::uintptr_t k_counter_offset{k_slot_count * k_slot_size};
 static_assert(k_counter_offset == 0x5910);
 
+// CUserCmd -> the protobuf message it builds -> the view-angle field -> the three float values inside it.
+constexpr std::uintptr_t k_command_message{0x40};
+constexpr std::uintptr_t k_message_viewangles{0x40};
+constexpr std::uintptr_t k_angles_values{0x18};
+constexpr std::uintptr_t k_sequence_field{0x8};
+
 [[nodiscard]] std::uintptr_t ring_array_address()
 {
     static const auto value = []
@@ -37,7 +43,7 @@ static_assert(k_counter_offset == 0x5910);
         if (candidate <= 0)
             return false;
         const auto command = base + k_slot_size * (static_cast<std::uintptr_t>(candidate) % k_slot_count);
-        if (process.load<int>(command + 0x8) == candidate)
+        if (process.load<int>(command + k_sequence_field) == candidate)
         {
             out_sequence = candidate;
             return true;
@@ -124,26 +130,69 @@ bool command_ring_reader::read(view& out)
     return fail(now);
 }
 
-bool command_ring_reader::read_angles(foundation::vec3& out, int* out_sequence)
+bool command_ring_reader::resolve_angles(std::uintptr_t& out_address, int& out_sequence)
 {
     view ring{};
     if (!read(ring))
         return false;
     const auto& process = game::bound_memory().process;
     const auto command = ring.base + k_slot_size * (static_cast<std::uintptr_t>(ring.sequence) % k_slot_count);
-    const auto message = process.load<std::uintptr_t>(command + 0x40);
-    const auto angles = message ? process.load<std::uintptr_t>(message + 0x40) : 0;
-    if (!angles)
+    const auto message = process.load<std::uintptr_t>(command + k_command_message);
+    if (!game::is_user_pointer(message))
+        return false;
+    const auto angles = process.load<std::uintptr_t>(message + k_message_viewangles);
+    if (!game::is_user_pointer(angles))
+        return false;
+    out_address = angles + k_angles_values;
+    out_sequence = ring.sequence;
+    return true;
+}
+
+bool command_ring_reader::read_angles(foundation::vec3& out, int* out_sequence)
+{
+    std::uintptr_t address{};
+    int sequence{};
+    if (!resolve_angles(address, sequence))
         return false;
 
-    const auto pitch = process.load<float>(angles + 0x18);
-    const auto yaw = process.load<float>(angles + 0x1c);
+    const auto& process = game::bound_memory().process;
+    const auto pitch = process.load<float>(address);
+    const auto yaw = process.load<float>(address + sizeof(float));
     if (!std::isfinite(pitch) || !std::isfinite(yaw) || std::abs(pitch) > 90.0f || std::abs(yaw) > 360.0f)
         return false;
 
     out = {pitch, yaw, 0.0f};
     if (out_sequence)
-        *out_sequence = ring.sequence;
+        *out_sequence = sequence;
+    return true;
+}
+
+bool command_ring_reader::write_angles(const foundation::vec3& angles, int* out_sequence)
+{
+    // Refuse anything the client would not itself have produced: a bad ring resolution shows up here
+    // before a single byte reaches the game rather than as a command that turns the shot arbitrarily.
+    if (!std::isfinite(angles.x) || !std::isfinite(angles.y) || std::abs(angles.x) > 89.9f ||
+        std::abs(angles.y) > 180.0f)
+        return false;
+
+    std::uintptr_t address{};
+    int sequence{};
+    if (!resolve_angles(address, sequence))
+        return false;
+
+    const auto& process = game::bound_memory().process;
+    const float pair[2]{angles.x, angles.y};
+    if (!process.copy_to(address, pair, sizeof(pair)))
+        return false;
+
+    // Read back: an already-consumed command or a stale ring shows up as a mismatch, so the caller
+    // counts a failure instead of believing the shot was steered.
+    if (process.load<float>(address, std::numeric_limits<float>::quiet_NaN()) != angles.x ||
+        process.load<float>(address + sizeof(float), std::numeric_limits<float>::quiet_NaN()) != angles.y)
+        return false;
+
+    if (out_sequence)
+        *out_sequence = sequence;
     return true;
 }
 } // namespace features::aimbot

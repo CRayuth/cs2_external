@@ -4,6 +4,8 @@
 #include <config/hotkeys.hpp>
 #include <features/visuals/visuals.hpp>
 #include <features/visuals/hitsound.hpp>
+#include <features/visuals/crosshair_game.hpp>
+#include <platform/windows/clipboard.hpp>
 #include <features/chams/preview.hpp>
 #include <features/chams/renderer.hpp>
 #include <render/text/localization.hpp>
@@ -428,11 +430,61 @@ void draw_effects_tab()
 
              static constexpr std::array<const char*, 5> hitsound_styles{"Soft", "Glass", "Pluck", "Crisp", "Flesh"};
              auto& sound = general.m_hitsound;
-             toggle_popup_row("Hit Sound", sound.enabled, 4,
+             toggle_popup_row("Hit Sound", sound.enabled, 5,
                               [&]
                               {
                                   select_row("Sound", sound.style, hitsound_styles);
                                   slider_percent_row("Volume", sound.volume);
+                                  static std::vector<std::string> device_names{};
+                                  static std::vector<const char*> device_options{};
+                                  static std::vector<std::string> device_ids{};
+                                  static std::string device_key{};
+                                  const auto listed = features::visuals::hitsounds().devices();
+                                  std::string signature{};
+                                  for (const auto& entry : listed)
+                                      signature += entry.id + entry.name + (entry.system_default ? "*" : "|");
+                                  if (signature != device_key)
+                                  {
+                                      device_key = signature;
+                                      device_ids.clear();
+                                      device_names.clear();
+                                      device_options.clear();
+                                      device_ids.push_back({});
+                                      std::string fallback{"System default"};
+                                      for (const auto& entry : listed)
+                                          if (entry.system_default && !entry.name.empty())
+                                          {
+                                              fallback = std::format("System default ({})", entry.name);
+                                              break;
+                                          }
+                                      device_names.push_back(fallback);
+                                      for (const auto& entry : listed)
+                                      {
+                                          device_ids.push_back(entry.id);
+                                          device_names.push_back(entry.name.empty() ? entry.id : entry.name);
+                                      }
+                                      device_options.reserve(device_names.size());
+                                      for (const auto& name : device_names)
+                                          device_options.push_back(name.c_str());
+                                  }
+                                  auto current = 0;
+                                  for (std::size_t i = 0; i < device_ids.size(); ++i)
+                                      if (device_ids[i] == sound.device_id())
+                                      {
+                                          current = static_cast<int>(i);
+                                          break;
+                                      }
+                                  if (sound.device_id().empty() && !device_ids.empty())
+                                      current = 0;
+                                  auto picked = current;
+                                  select_row("Output Device", picked, device_options);
+                                  if (picked != current && picked >= 0 && picked < static_cast<int>(device_ids.size()))
+                                  {
+                                      sound.assign_device(device_ids[static_cast<std::size_t>(picked)]);
+                                      features::visuals::hitsounds().set_device(sound.device_id());
+                                      features::visuals::hitsounds().play(sound.style,
+                                                                           sound.volume > 0.01f ? sound.volume : 0.6f);
+                                  }
                                   if (button_row("Preview", "Play"))
                                       features::visuals::hitsounds().play(sound.style, sound.volume);
                                   toggle_popup_row(
@@ -440,9 +492,9 @@ void draw_effects_tab()
                                       [&]
                                       {
                                           color_row("Damage Color", sound.damage_color);
-                                          slider_row("Damage Size", sound.damage_size, 8.0f, 28.0f, "", 0.5f);
-                                          slider_row("Damage Duration", sound.damage_duration, 0.15f, 2.0f, "s", 0.05f);
-                                          slider_row("Damage Rise", sound.damage_rise, 0.0f, 100.0f, "px", 1.0f);
+                                          slider_row("Damage Size", sound.damage_size, 8.0f, 72.0f, "", 0.5f);
+                                          slider_row("Damage Duration", sound.damage_duration, 0.15f, 3.0f, "s", 0.05f);
+                                          slider_row("Damage Rise", sound.damage_rise, 0.0f, 220.0f, "px", 1.0f);
                                       });
                               });
              toggle_popup_row("Kill Sound", sound.kill_enabled, 3,
@@ -486,8 +538,18 @@ void draw_effects_tab()
 
 void draw_crosshair_tab()
 {
+    enum class export_state
+    {
+        none,
+        applied,
+        partial,
+        copied,
+        blocked
+    };
+    static export_state state{};
+
     auto& p = config::visual_settings.m_crosshair;
-    card("crosshair_settings", "CROSSHAIR SETTINGS", 4,
+    card("crosshair_settings", "CROSSHAIR SETTINGS", 6,
          [&]
          {
              toggle_row("Enable Crosshair", p.enabled);
@@ -500,8 +562,20 @@ void draw_crosshair_tab()
                                   slider_row("Gap", p.gap, 0.0f, 50.0f, "", 0.5f);
                               });
              slider_row("Thickness", p.thickness, 1.0f, 10.0f, "", 0.25f);
+             toggle_popup_row("Dynamic Gap", p.dynamic, 2,
+                              [&]
+                              {
+                                  slider_row("Open At Speed", p.dynamic_gap, 0.0f, 40.0f, " px", 0.5f);
+                                  slider_row("Full Speed", p.dynamic_speed, 20.0f, 1000.0f, " u/s", 10.0f);
+                              });
+             toggle_popup_row("Sniper Line", p.sniper_mode, 2,
+                              [&]
+                              {
+                                  slider_row("Width", p.sniper_width, 0.0f, 10.0f, " px", 0.5f);
+                                  toggle_row("Hide Crosshair While Scoped", p.hide_when_scoped);
+                              });
          });
-    card("crosshair_colors", "COLORS", 3,
+    card("crosshair_colors", "COLORS", 4,
          [&]
          {
              toggle_popup_row("Draw Outline", p.outline, 2,
@@ -511,6 +585,7 @@ void draw_crosshair_tab()
                                   slider_row("Outline Thickness", p.outline_thickness, 0.5f, 3.0f, "", 0.5f);
                               });
              color_row("Primary Color", p.color);
+             toggle_popup_row("RGB Cycle", p.rgb, 1, [&] { slider_row("Speed", p.rgb_speed, 0.05f, 2.0f, " Hz", 0.05f); });
              toggle_popup_row("Penetration Indicator", p.penetration_enabled, 3,
                               [&]
                               {
@@ -518,6 +593,40 @@ void draw_crosshair_tab()
                                   color_row("Cannot Penetrate", p.penetration_color_no);
                                   slider_row("Min Damage", p.penetration_min_damage, 1.0f, 200.0f, "", 1.0f);
                               });
+         });
+
+    // The same shape written into the game's own console variables, or copied out for a player who would rather keep
+    // it in his cs2/cfg file.
+    card("crosshair_console", "GAME CROSSHAIR", 3,
+         [&]
+         {
+             if (button_row("Send To Game", "Apply", row_action_icon::check))
+             {
+                 const auto result = features::visuals::apply_crosshair_to_game(p);
+                 state = !result.writable ? export_state::blocked
+                         : result.missing == 0 ? export_state::applied
+                                               : export_state::partial;
+             }
+             if (button_row("Copy Commands", "Copy", row_action_icon::copy))
+                 state = platform::windows::set_clipboard_text(features::visuals::crosshair_command_text(p))
+                             ? export_state::copied
+                             : export_state::blocked;
+
+             const char* status = "Apply writes cl_crosshair_* into the running game";
+             auto failed = false;
+             switch (state)
+             {
+                 case export_state::applied: status = "Crosshair applied"; break;
+                 case export_state::partial: status = "Applied; some variables are missing"; break;
+                 case export_state::copied: status = "Commands copied to clipboard"; break;
+                 case export_state::blocked:
+                     status = "Game process is read-only";
+                     failed = true;
+                     break;
+                 case export_state::none: break;
+             }
+             ImGui::TextColored(failed ? ImVec4{1.0f, 0.42f, 0.45f, 1.0f} : k_text_muted, "%s",
+                                render::localization::tr(status));
          });
 }
 } // namespace

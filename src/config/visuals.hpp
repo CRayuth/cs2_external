@@ -385,6 +385,21 @@ struct visual_profile
         foundation::rgba penetration_color_yes{0, 255, 0, 255};
         foundation::rgba penetration_color_no{255, 0, 0, 255};
         float penetration_min_damage{90.0f};
+
+        // Arms separate further as the local player moves, the way the game's own classic-dynamic style behaves.
+        bool dynamic{false};
+        float dynamic_gap{6.0f};
+        // Horizontal speed at which the arms reach `dynamic_gap`; below it the offset scales linearly.
+        float dynamic_speed{250.0f};
+
+        // Hue rotation around the configured colour's saturation and value.
+        bool rgb{false};
+        float rgb_speed{0.35f};
+
+        // Precision weapons show one thin vertical line while the local player looks through the scope.
+        bool sniper_mode{true};
+        float sniper_width{2.0f};
+        bool hide_when_scoped{false};
     } m_crosshair{};
 
     struct chams

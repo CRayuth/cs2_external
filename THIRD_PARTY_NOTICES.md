@@ -17,6 +17,7 @@ Third-party components remain under the licenses named below.
 | cs2-dumper-derived schema traversal | MIT | https://github.com/a2x/cs2-dumper |
 | Kenney Interface Sounds | CC0-1.0 | https://github.com/Calinou/kenney-interface-sounds |
 | LaSonotheque / BigSoundBank grapefruit foley | CC0-1.0 | https://bigsoundbank.com/gore-grapefruit-6-s2600.html |
+| cs2-ErScripts (feature reference only, no code reused) | MIT | https://github.com/emp0ry/cs2-ErScripts |
 
 Library revisions are pinned and fetched by CMake from the upstream projects.
 Notices for embedded audio assets remain in `src/resources/sounds/LICENSE.md`.

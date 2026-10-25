@@ -22,8 +22,10 @@ enum class zone : std::uint8_t
     ballistics_tick,
     aim_tick,
     grenade_aim_tick,
+    silent_aim_tick,
     movement_loop,
     bhop_tick,
+    speed_hack_tick,
     auto_stop_tick,
     anti_flash_tick,
     flash_watch_tick,
@@ -60,6 +62,8 @@ enum class zone : std::uint8_t
     aim_trigger,
     aim_choose,
     aim_flush,
+    automation_tick,
+    round_alert,
     count
 };
 

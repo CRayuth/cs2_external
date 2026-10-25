@@ -405,8 +405,11 @@ private:
     };
     struct hitmarker_t
     {
-        foundation::vec3 position{};
+        foundation::vec3 position{}; // the point that was hit, used when no live target is known
         std::chrono::steady_clock::time_point timestamp{};
+        // The target the mark belongs to. Drawn against that player's current body while they are still
+        // standing, so a running target does not leave the mark hanging where they used to be.
+        std::uintptr_t pawn{};
     };
     struct pending_damage_t
     {
@@ -420,6 +423,7 @@ private:
         foundation::vec3 position{};
         int damage{};
         std::chrono::steady_clock::time_point timestamp{};
+        std::uintptr_t pawn{}; // followed the same way as the hitmarker, see hitmarker_t
     };
     struct tracked_health_t
     {
@@ -543,6 +547,9 @@ private:
                             bool correlate_trigger = true);
     void render_hitmarkers(render::draw::draw_list& draw_list, const render_snapshot& frame);
     void render_damage_numbers(render::draw::draw_list& draw_list, const render_snapshot& frame);
+    // Where a hit feedback element belongs this frame: the live body of the target while it is standing and
+    // still known, otherwise the point that was hit. A killed player keeps the mark at the impact point.
+    [[nodiscard]] static foundation::vec3 marker_anchor(std::uintptr_t pawn, const foundation::vec3& frozen) noexcept;
     void add_tracer(const foundation::vec3& start, const foundation::vec3& end, bool exact, float shot_time = 0.0f);
     void collect_bullet_hit_models(std::uintptr_t pawn, bool enemy_pawn);
     void collect_bullet_service_impacts(std::uintptr_t pawn);

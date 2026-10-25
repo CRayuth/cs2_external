@@ -85,7 +85,9 @@ aimbot_t::trigger_result aimbot_t::trace_direction(const foundation::vec3& eye_p
             const auto hitgroup = game::hitbox_data().hitgroup_from_hitbox(hitbox.index);
             if ((cfg.hitbox_parts & simulation::aim_part_of(hitbox, hitgroup)) == 0)
                 continue;
-            if (hitbox.index < 0 || hitbox.bone < 0 || hitbox.bone >= 128)
+            // Only a bone the reader actually filled: a zeroed one would carry the prediction offset below and
+            // then trace to a capsule sitting at the world origin.
+            if (hitbox.index < 0 || !bones.covers(hitbox.bone))
             {
                 continue;
             }
@@ -186,6 +188,17 @@ void aimbot_t::triggerbot(const foundation::vec3& eye_pos, const foundation::vec
         note(23, std::chrono::duration<float, std::milli>(now - m_trigger_release_time).count(), 0.0f);
         return;
     }
+    // A silent transport aims the command rather than the camera, so the shot leaves along the angle held
+    // for steering. The trace, the damage estimate and the hitchance all have to follow that angle or the
+    // trigger would keep judging alignment by a crosshair that never moved. With no fresh request held the
+    // trigger keeps its usual camera-based behaviour - and so it must when the request is held but never
+    // landed, because then the command really does carry the player's own view.
+    auto fire_angles = view_angles;
+    if (command_steering().healthy())
+    {
+        if (const auto steered = command_steering().peek(); steered)
+            fire_angles = {steered->x, steered->y, view_angles.z};
+    }
     if (now < m_trigger_cooldown_until)
     {
         cancel_scheduled();
@@ -212,7 +225,7 @@ void aimbot_t::triggerbot(const foundation::vec3& eye_pos, const foundation::vec
 
         // CViewRender already contains the final rendered camera orientation. Adding
         // AimPunch here a second time makes the miss grow with target distance.
-        const auto trace_angles = view_angles;
+        const auto trace_angles = fire_angles;
         foundation::vec3 forward{};
         trace_angles.to_directions(&forward, nullptr, nullptr);
         const auto result = trace_direction(eye_pos, forward, players, cfg);
@@ -284,7 +297,7 @@ void aimbot_t::triggerbot(const foundation::vec3& eye_pos, const foundation::vec
         if (!players.empty())
         {
             foundation::vec3 forward{};
-            view_angles.to_directions(&forward, nullptr, nullptr);
+            fire_angles.to_directions(&forward, nullptr, nullptr);
             const auto fresh = trace_direction(eye_pos, forward, players, cfg);
             if (!fresh.player)
             {
@@ -295,7 +308,7 @@ void aimbot_t::triggerbot(const foundation::vec3& eye_pos, const foundation::vec
             m_trigger_target = *fresh.player;
             m_trigger_target_bones = fresh.bones;
             m_trigger_target_eye = eye_pos;
-            m_trigger_target_angles = view_angles;
+            m_trigger_target_angles = fire_angles;
         }
         features::visuals::event_log().push_throttled(0x54524302u, "Trigger waiting: hitchance",
                                                       features::visuals::event_kind::blocked,

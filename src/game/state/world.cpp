@@ -871,7 +871,10 @@ bool world_sampler::read_player(const player_pass& pass, const entity_directory:
     p.is_ducked = movement_services && process.load<bool>(movement_services + o.movement_ducked);
 
     read_bones(pass, p);
-    p.is_visible = p.bones.is_valid() && clear_line(pass.view_origin, p.bones.get_position(k_head_bone));
+    // The head must be one of the bones actually read: a bone the reader left zero would pull the visibility
+    // line to the world origin and report whatever that happens to cross.
+    p.is_visible = p.bones.is_valid() && p.bones.covers(k_head_bone) &&
+                   clear_line(pass.view_origin, p.bones.get_position(k_head_bone));
     track_emit_sound(pass, p);
     m_caches->live_pawns.push_back(p.pawn);
     p.hitboxes = game::hitbox_data().query(game_scene_node, &m_hitbox_cache);

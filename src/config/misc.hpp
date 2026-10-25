@@ -2,10 +2,15 @@
 
 #include <windows.h>
 
+#include <algorithm>
+#include <array>
+#include <cstddef>
 #include <cstdint>
+#include <string>
 
 #include <foundation/color.hpp>
 #include <config/game_controls.hpp>
+#include <platform/windows/activation.hpp>
 
 namespace config
 {
@@ -73,12 +78,20 @@ struct general_profile
         bool enabled{true};
         int style{4}; // 0 soft, 1 glass, 2 pluck, 3 crisp, 4 flesh
         float volume{0.55f};
+        std::array<char, 256> device{};
+        [[nodiscard]] std::string device_id() const { return std::string(device.data()); }
+        void assign_device(const std::string& id)
+        {
+            const auto length = std::min<std::size_t>(id.size(), device.size() - 1);
+            std::copy_n(id.data(), static_cast<std::ptrdiff_t>(length), device.begin());
+            device[length] = '\0';
+        }
         bool kill_enabled{true};
         int kill_style{3}; // 0 soft, 1 glass, 2 pluck, 3 crisp, 4 flesh
         float kill_volume{0.8f};
         bool show_damage{true};
         foundation::rgba damage_color{255, 108, 112, 255};
-        float damage_size{13.0f};
+        float damage_size{20.0f};
         float damage_duration{0.75f};
         float damage_rise{30.0f};
     } m_hitsound{};
@@ -104,7 +117,9 @@ struct general_profile
     {
         bool enabled{false};
 
-        float draw_distance{800.0f};
+        // 800 was narrower than most site-to-throw distances on the larger maps, so a fresh profile
+        // looked like a helper with almost no lineups on it.
+        float draw_distance{1400.0f};
         float stand_distance{220.0f};
         float stand_radius{22.0f};
         // Broad radius keeps the marker easy to acquire; automatic execution uses
@@ -114,6 +129,9 @@ struct general_profile
 
         bool show_action{true};
         bool show_distance{true};
+        // Standing on one spot hides every other plaque by default. Some players use the helper to
+        // decide where to go next, and want the rest of the map to stay visible.
+        bool show_other_spots{};
 
         foundation::rgba plaque_background{12, 13, 18, 205};
         foundation::rgba plaque_text{245, 245, 250, 255};
@@ -213,6 +231,32 @@ struct general_profile
         int activation_key{VK_XBUTTON1};
     } m_edge_jump{};
 
+    // Speed Hack: while active, the local pawn's m_flMaxspeed is scaled by `multiplier`. The engine
+    // recomputes m_flMaxspeed every tick (walk / duck / weapon / air), so the tick reads the fresh
+    // game value and rewrites it; when activation ends, the multiplier is no longer applied and the
+    // next tick's engine value takes over unchanged.
+    //
+    // Activation matches the same tri-state used by the visual profiles: always on, hold the key, or
+    // toggle with each press. The key slot is ignored in always-on mode.
+    struct speed_hack
+    {
+        enum activation_type : int
+        {
+            always_on = 0,
+            hold = 1,
+            toggle = 2
+        };
+        bool enabled{false};
+        int activation_mode{hold};
+        int activation_key{VK_SHIFT};
+        float multiplier{1.2f};
+        [[nodiscard]] bool active() const noexcept
+        {
+            return enabled &&
+                   platform::windows::binding_active(activation_mode, activation_key, always_on, hold, toggle);
+        }
+    } m_speed_hack{};
+
     game_controls m_game_controls{};
 
     struct auto_stop
@@ -223,6 +267,46 @@ struct general_profile
         float stop_speed{8.0f};
         float required_shoot_speed{34.0f};
     } m_auto_stop{};
+
+    // Automation that presses the player's own bound keys, so it needs no key of its own and stops the moment the
+    // menu is open, a text field has focus, or the user presses the same control himself.
+    struct automation
+    {
+        struct auto_pistol
+        {
+            bool enabled{false};
+            // One press is held this long; semi-automatic pistols fire on the press edge, so a short hold is enough.
+            float hold_ms{4.0f};
+            // Delay between the release and the next press.
+            float interval_ms{60.0f};
+        } auto_pistol{};
+
+        struct anti_afk
+        {
+            bool enabled{false};
+            float hold_ms{18.0f};
+            // Idle time without any movement input before one tap is sent.
+            float idle_seconds{45.0f};
+        } anti_afk{};
+    } m_automation{};
+
+    // Spawn alert: the local player going from dead to alive is the only round-start edge the game exposes
+    // without a round-phase field, so it is what tells the alert to fire.
+    struct round_alert
+    {
+        bool enabled{false};
+        int style{2}; // 0 soft, 1 glass, 2 pluck, 3 crisp, 4 flesh
+        float volume{0.6f};
+        bool when_unfocused{true};
+    } m_round_alert{};
+
+    struct keystrokes
+    {
+        bool enabled{false};
+        screen_layout layout{1230.0f, 40.0f};
+        float key_size{34.0f};
+        bool show_mouse{true};
+    } m_keystrokes{};
 
     // Interface language: 0 English, 1 Russian (render::localization::id).
     static constexpr int k_language_count = 2;

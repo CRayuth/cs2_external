@@ -96,7 +96,8 @@ foundation::vec3 aimbot_t::get_aim_point(const foundation::vec3& eye_pos, const 
 
     for (const auto& hb : player.hitboxes)
     {
-        if (hb.index < 0 || hb.bone < 0 || hb.bone >= 128)
+        // A hitbox on a bone the reader did not fill would sit at the origin: pick no point from it.
+        if (hb.index < 0 || !bones.covers(hb.bone))
         {
             continue;
         }
@@ -274,6 +275,8 @@ void aimbot_t::draw_fov_ring(render::draw::draw_list& draw_list, const foundatio
     std::uintptr_t selected_bone_cache{};
     int selected_bone{-1};
     foundation::vec3 selected_offset{};
+    foundation::vec3 ring_center{};
+    bool silent_ring{};
     {
         std::scoped_lock lock(m_indicator_mutex);
         point = m_indicator_point;
@@ -283,7 +286,20 @@ void aimbot_t::draw_fov_ring(render::draw::draw_list& draw_list, const foundatio
         selected_bone_cache = m_indicator_bone_cache;
         selected_bone = m_indicator_bone;
         selected_offset = m_indicator_offset;
+        ring_center = m_indicator_ring_center;
+        silent_ring = m_indicator_silent_ring;
     }
+    // The anchor is refreshed from the same live pose the aim point is refreshed from, so a turning head does
+    // not leave the ring lagging behind by up to a third of a second.
+    const auto refresh_head = [](const game::skeleton_reader::data& skeleton, foundation::vec3& centre)
+    {
+        const auto head_joint = static_cast<int>(game::rules::joint_id::head);
+        if (!skeleton.is_valid() || !skeleton.covers(head_joint))
+            return;
+        const auto head = skeleton.get_position(static_cast<std::uint32_t>(head_joint));
+        if (std::isfinite(head.x) && std::isfinite(head.y) && std::isfinite(head.z) && head.length_sqr() > 0.0f)
+            centre = head;
+    };
     if (selected_pawn && selected_bone >= 0)
     {
         bool refreshed{};
@@ -293,30 +309,38 @@ void aimbot_t::draw_fov_ring(render::draw::draw_list& draw_list, const foundatio
             {
                 if (player.pawn != selected_pawn || player.bone_cache != selected_bone_cache)
                     continue;
-                if (selected_bone < 128 && player.bones.is_valid())
+                if (player.bones.covers(selected_bone) && player.bones.is_valid())
                 {
                     const auto& bone = player.bones.bones[selected_bone];
                     point = bone.position + bone.rotation.apply(selected_offset);
                     refreshed = true;
                 }
+                if (silent_ring)
+                    refresh_head(player.bones, ring_center);
                 break;
             }
         }
         if (!refreshed && selected_bone_cache)
         {
             const auto bones = game::skeletons().get(selected_bone_cache);
-            if (selected_bone < 128 && bones.is_valid())
+            if (bones.covers(selected_bone) && bones.is_valid())
             {
                 const auto& bone = bones.bones[selected_bone];
                 point = bone.position + bone.rotation.apply(selected_offset);
+                if (silent_ring)
+                    refresh_head(bones, ring_center);
             }
         }
     }
     const auto target_recent = updated.time_since_epoch().count() != 0 &&
                                std::chrono::steady_clock::now() - updated <= std::chrono::milliseconds(100);
 
+    // Visual-only scale of the drawn ring. The degrees above still decide where a shot may go, so the circle can
+    // be made readable at any aim angle without changing the aim.
+    const auto draw_scale = std::clamp(config.fov_draw_scale, 5.0f, 400.0f) * 0.01f;
+
     const auto mode = config.fov_config.selection;
-    if (config.draw_fov && mode != config::combat_profile::fov_settings::target_distance)
+    if (config.draw_fov && !silent_ring && mode != config::combat_profile::fov_settings::target_distance)
     {
         auto degrees = static_cast<float>(config.fov);
         if (mode == config::combat_profile::fov_settings::distance)
@@ -332,7 +356,7 @@ void aimbot_t::draw_fov_ring(render::draw::draw_list& draw_list, const foundatio
                 degrees = distance_fov(config, surface.hit ? surface.distance : max_distance);
             }
         }
-        const auto radius = screen_radius_for_fov(eye_pos, view_angles, degrees);
+        const auto radius = screen_radius_for_fov(eye_pos, view_angles, degrees) * draw_scale;
         if (radius > 0.5f)
         {
             const auto [width, height] = render::draw::get_display_size();
@@ -342,17 +366,22 @@ void aimbot_t::draw_fov_ring(render::draw::draw_list& draw_list, const foundatio
         }
     }
 
-    if (config.draw_fov && mode == config::combat_profile::fov_settings::target_distance && target_recent)
+    // Silent aim draws one ring on the target instead of one on the screen centre.
+    if (config.draw_fov && (silent_ring || mode == config::combat_profile::fov_settings::target_distance) &&
+        target_recent)
     {
-        const auto screen = game::camera().project(point);
+        const auto anchor = silent_ring ? ring_center : point;
+        const auto screen = game::camera().project(anchor);
         if (!game::camera().projection_valid(screen))
             return;
         const auto color = render::draw::rgba{config.fov_color.r, config.fov_color.g, config.fov_color.b,
                                               static_cast<std::uint8_t>(visibility * 150.0f)};
-        const auto target_angles = foundation::look_at_angles(eye_pos, point);
+        const auto target_angles = foundation::look_at_angles(eye_pos, anchor);
         const auto radius = screen_radius_for_fov(
-            eye_pos, target_angles,
-            selected_fov > 0.0f ? selected_fov : distance_fov(config, (point - eye_pos).length()));
+                                eye_pos, target_angles,
+                                selected_fov > 0.0f ? selected_fov
+                                                    : distance_fov(config, (anchor - eye_pos).length())) *
+                            draw_scale;
         if (radius > 0.5f)
             draw_list.add_circle(screen.x, screen.y, radius, color, 64);
     }

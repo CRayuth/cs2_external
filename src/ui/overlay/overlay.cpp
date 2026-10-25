@@ -579,6 +579,7 @@ void overlay_t::build_frame()
             m_hud_panels.draw_aimbot_status(interactive);
             m_hud_panels.draw_flash_status(interactive);
             m_hud_panels.draw_plant_alert(interactive);
+            m_hud_panels.draw_keystrokes(interactive);
         }
     }
 

@@ -83,7 +83,7 @@ template<typename plan_t>
     {
         if (result.count == result.capsules.size())
             break;
-        if (box.index < 0 || box.bone < 0 || box.bone >= player.bones.bones.size())
+        if (box.index < 0 || !player.bones.covers(box.bone))
             continue;
         const auto& bone = player.bones.bones[box.bone];
         result.capsules[result.count++] = {box.index,
@@ -318,7 +318,7 @@ aimbot_t::find_restricted_target(ballistics_t& ballistics, const config::combat_
             continue;
         for (const auto& hitbox : player.hitboxes)
         {
-            if (hitbox.index < 0 || hitbox.bone < 0)
+            if (hitbox.index < 0 || !player.bones.covers(hitbox.bone))
                 continue;
             const auto hitgroup = game::hitbox_data().hitgroup_from_hitbox(hitbox.index);
             if ((cfg.hitbox_parts & simulation::aim_part_of(hitbox.index, hitgroup)) == 0)

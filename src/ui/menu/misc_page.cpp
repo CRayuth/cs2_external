@@ -139,7 +139,27 @@ void draw_general_tab()
                                                                  });
                                           });
                    });
-    card_in_column("automation", "AUTOMATION", 1, 1, [&] { toggle_row("Auto Accept Match", p.auto_accept); });
+    card_in_column("automation", "AUTOMATION", 3, 1,
+                   [&]
+                   {
+                       toggle_row("Auto Accept Match", p.auto_accept);
+                       toggle_popup_row("Auto Pistol", p.m_automation.auto_pistol.enabled, 2,
+                                        [&]
+                                        {
+                                            slider_row("Hold", p.m_automation.auto_pistol.hold_ms, 1.0f, 20.0f, " ms",
+                                                       0.5f);
+                                            slider_row("Interval", p.m_automation.auto_pistol.interval_ms, 20.0f, 300.0f,
+                                                       " ms", 1.0f);
+                                        });
+                       toggle_popup_row("Anti-AFK", p.m_automation.anti_afk.enabled, 2,
+                                        [&]
+                                        {
+                                            slider_row("Hold", p.m_automation.anti_afk.hold_ms, 1.0f, 100.0f, " ms",
+                                                       1.0f);
+                                            slider_row("Idle Before Tap", p.m_automation.anti_afk.idle_seconds, 5.0f,
+                                                       300.0f, " s", 5.0f);
+                                        });
+                   });
     // A short status under the engine rows: the last report, or a crash of the previous session.
     const char* status{};
     bool status_failed{};
@@ -193,11 +213,14 @@ void draw_grenades_tab()
                                          slider_row("Release Radius", n.release_radius, 1.0f, 16.0f, "u", 0.5f);
                                          slider_row("Height Tolerance", n.height_tolerance, 1.0f, 24.0f, "u", 0.5f);
                                      });
-                                 settings_popup_row("Display", 2,
+                                 settings_popup_row("Display", 3,
                                                     [&]
                                                     {
                                                         toggle_row("Show Throw Type", n.show_action);
                                                         toggle_row("Show Distance", n.show_distance);
+                                                        // Off keeps the old behaviour: standing on a spot hides every
+                                                        // other plaque. Players choosing where to go next want them.
+                                                        toggle_row("Show Other Spots", n.show_other_spots);
                                                     });
                                  settings_popup_row("Plaque Style", 3,
                                                     [&]
@@ -288,13 +311,26 @@ void draw_grenades_tab()
 void draw_movement_tab()
 {
     auto& p = config::general_settings;
-    card("movement", "MOVEMENT", 2,
+    // Speed Hack's popup hides the keybind row when the mode is always-on, so the reserved height matches
+    // what the callback will actually render. Bunny Hop and Edge Jump still occupy two rows.
+    const auto speed_uses_key = p.m_speed_hack.activation_mode != config::general_profile::speed_hack::always_on;
+    const auto speed_rows = p.m_speed_hack.enabled ? (speed_uses_key ? 3 : 2) : 1;
+    card("movement", "MOVEMENT", 2 + speed_rows,
          [&]
          {
              toggle_popup_row("Enable Bunny Hop", p.m_bunny_hop.enabled, 1,
                               [&] { keybind_row("Activation Key", p.m_bunny_hop.activation_key); });
              toggle_popup_row("Enable Edge Jump", p.m_edge_jump.enabled, 1,
                               [&] { keybind_row("Activation Key", p.m_edge_jump.activation_key); });
+             toggle_popup_row("Enable Speed Hack", p.m_speed_hack.enabled, speed_rows,
+                              [&]
+                              {
+                                  static constexpr const char* speed_modes[]{"Always On", "Hold", "Toggle"};
+                                  select_row("Mode", p.m_speed_hack.activation_mode, speed_modes);
+                                  if (p.m_speed_hack.activation_mode != config::general_profile::speed_hack::always_on)
+                                      keybind_row("Activation Key", p.m_speed_hack.activation_key);
+                                  slider_row("Speed Multiplier", p.m_speed_hack.multiplier, 1.0f, 3.0f, "x", 0.05f);
+                              });
          });
     auto& keys = p.m_game_controls;
     card_in_column("game_keyboard", "GAME KEY BINDS", 7, 0,
@@ -321,7 +357,7 @@ void draw_movement_tab()
 void draw_overlay_tab()
 {
     auto& p = config::general_settings;
-    card("overlay", "OVERLAY", 6,
+    card("overlay", "OVERLAY", 8,
          [&]
          {
              toggle_row("OBS Bypass", p.obs_bypass);
@@ -361,6 +397,21 @@ void draw_overlay_tab()
                                   toggle_row("Toggle Binds", p.m_keybind_list.show_toggle);
                               });
              toggle_row("Show Bomb Info", config::visual_settings.m_bomb.show_info_panel);
+             toggle_popup_row("Show Keystrokes", p.m_keystrokes.enabled, 2,
+                              [&]
+                              {
+                                  slider_row("Key Size", p.m_keystrokes.key_size, 16.0f, 96.0f, " px", 1.0f);
+                                  toggle_row("Show Fire Button", p.m_keystrokes.show_mouse);
+                              });
+             toggle_popup_row("Spawn Alert", p.m_round_alert.enabled, 3,
+                              [&]
+                              {
+                                  static constexpr const char* alert_sounds[]{"Soft", "Glass", "Pluck", "Crisp",
+                                                                              "Flesh"};
+                                  select_row("Sound", p.m_round_alert.style, alert_sounds);
+                                  slider_percent_row("Volume", p.m_round_alert.volume);
+                                  toggle_row("Only When Game Is Not Focused", p.m_round_alert.when_unfocused);
+                              });
          });
 }
 

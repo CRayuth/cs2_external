@@ -4,8 +4,11 @@
 
 #include <xaudio2.h>
 #include <combaseapi.h>
+#include <mmdeviceapi.h>
+#include <functiondiscoverykeys_devpkey.h>
 #include <condition_variable>
 #include <deque>
+#include <utility>
 
 namespace features::visuals
 {
@@ -91,8 +94,14 @@ struct hitsound_player::implementation
 {
     struct request
     {
+        enum class kind
+        {
+            play,
+            device
+        } type{};
         int style{};
         float volume{};
+        std::string device{};
     };
     struct voice
     {
@@ -103,10 +112,16 @@ struct hitsound_player::implementation
     std::condition_variable wake{};
     std::deque<request> requests{};
     bool stopping{};
+    std::vector<sound_device> m_devices{};
+    std::string m_selected{};
     IXAudio2* engine{};
     IXAudio2MasteringVoice* mastering{};
     std::vector<voice> voices{};
     std::thread worker{};
+    std::string m_default_id{};
+    std::string m_attached{};
+    bool m_attached_resolved{};
+    std::chrono::steady_clock::time_point m_next_scan{};
 
     implementation()
     {
@@ -128,15 +143,186 @@ struct hitsound_player::implementation
         wake.notify_one();
         if (worker.joinable())
             worker.join();
-        for (auto& voice : voices)
+        for (auto& entry : voices)
         {
-            if (voice.source)
-                voice.source->DestroyVoice();
+            if (entry.source)
+                entry.source->DestroyVoice();
         }
         if (mastering)
             mastering->DestroyVoice();
         if (engine)
             engine->Release();
+    }
+
+    [[nodiscard]] static std::string to_utf8(const wchar_t* value)
+    {
+        if (!value)
+            return {};
+        const auto needed = ::WideCharToMultiByte(CP_UTF8, 0, value, -1, nullptr, 0, nullptr, nullptr);
+        if (needed <= 1)
+            return {};
+        std::string text(static_cast<std::size_t>(needed) - 1, '\0');
+        ::WideCharToMultiByte(CP_UTF8, 0, value, -1, text.data(), needed, nullptr, nullptr);
+        return text;
+    }
+
+    [[nodiscard]] static std::wstring to_utf16(const std::string& value)
+    {
+        if (value.empty())
+            return {};
+        const auto needed =
+            ::MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0);
+        std::wstring wide(static_cast<std::size_t>(needed), L'\0');
+        ::MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), wide.data(), needed);
+        return wide;
+    }
+
+    void scan()
+    {
+        std::vector<sound_device> listed{};
+        std::string fallback{};
+        IMMDeviceEnumerator* enumerator{};
+        if (SUCCEEDED(::CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                        __uuidof(IMMDeviceEnumerator), reinterpret_cast<void**>(&enumerator))))
+        {
+            IMMDevice* device{};
+            if (SUCCEEDED(enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device)))
+            {
+                LPWSTR raw{};
+                if (SUCCEEDED(device->GetId(&raw)))
+                {
+                    fallback = to_utf8(raw);
+                    ::CoTaskMemFree(raw);
+                }
+                device->Release();
+            }
+            IMMDeviceCollection* collection{};
+            if (SUCCEEDED(enumerator->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &collection)))
+            {
+                UINT count{};
+                collection->GetCount(&count);
+                for (UINT index = 0; index < count; ++index)
+                {
+                    IMMDevice* item{};
+                    if (FAILED(collection->Item(index, &item)))
+                        continue;
+                    sound_device entry{};
+                    LPWSTR raw{};
+                    if (SUCCEEDED(item->GetId(&raw)))
+                    {
+                        entry.id = to_utf8(raw);
+                        ::CoTaskMemFree(raw);
+                    }
+                    IPropertyStore* store{};
+                    if (SUCCEEDED(item->OpenPropertyStore(STGM_READ, &store)))
+                    {
+                        PROPVARIANT value{};
+                        if (SUCCEEDED(store->GetValue(PKEY_Device_FriendlyName, &value)) && value.vt == VT_LPWSTR &&
+                            value.pwszVal)
+                        {
+                            entry.name = to_utf8(value.pwszVal);
+                            ::CoTaskMemFree(value.pwszVal);
+                        }
+                        store->Release();
+                    }
+                    entry.system_default = !entry.id.empty() && entry.id == fallback;
+                    item->Release();
+                    if (!entry.id.empty())
+                        listed.push_back(std::move(entry));
+                }
+                collection->Release();
+            }
+            enumerator->Release();
+        }
+
+        std::scoped_lock lock(mutex);
+        m_devices = std::move(listed);
+        m_default_id = fallback;
+    }
+
+    [[nodiscard]] std::string selected()
+    {
+        std::scoped_lock lock(mutex);
+        return m_selected;
+    }
+
+    [[nodiscard]] bool endpoint_exists(const std::string& id)
+    {
+        std::scoped_lock lock(mutex);
+        return std::any_of(m_devices.begin(), m_devices.end(),
+                           [&](const sound_device& entry) { return entry.id == id; });
+    }
+
+    [[nodiscard]] std::string resolve(const std::string& wanted)
+    {
+        if (!wanted.empty() && endpoint_exists(wanted))
+            return wanted;
+        std::scoped_lock lock(mutex);
+        return m_default_id;
+    }
+
+    void drop_voices()
+    {
+        for (auto& entry : voices)
+        {
+            if (!entry.source)
+                continue;
+            entry.source->Stop(0);
+            entry.source->DestroyVoice();
+        }
+        voices.clear();
+    }
+
+    bool attach_mastering(const std::string& resolved)
+    {
+        if (!engine)
+            return false;
+        drop_voices();
+        if (mastering)
+        {
+            mastering->DestroyVoice();
+            mastering = nullptr;
+        }
+        const auto wide = to_utf16(resolved);
+        auto result = FAILED(engine->CreateMasteringVoice(&mastering, XAUDIO2_DEFAULT_CHANNELS,
+                                                          XAUDIO2_DEFAULT_SAMPLERATE, 0,
+                                                          resolved.empty() ? nullptr : wide.c_str(), nullptr,
+                                                          AudioCategory_GameEffects))
+                          ? engine->CreateMasteringVoice(&mastering, XAUDIO2_DEFAULT_CHANNELS,
+                                                         XAUDIO2_DEFAULT_SAMPLERATE, 0, nullptr, nullptr,
+                                                         AudioCategory_GameEffects)
+                          : S_OK;
+        if (FAILED(result) || !mastering)
+        {
+            mastering = nullptr;
+            m_attached.clear();
+            m_attached_resolved = false;
+            return false;
+        }
+        m_attached = resolved;
+        m_attached_resolved = true;
+        return true;
+    }
+
+    bool ensure_output()
+    {
+        if (!engine && FAILED(XAudio2Create(&engine, 0, XAUDIO2_DEFAULT_PROCESSOR)))
+        {
+            engine = nullptr;
+            return false;
+        }
+        if (mastering && m_attached_resolved && m_attached == resolve(selected()))
+            return true;
+        return attach_mastering(resolve(selected()));
+    }
+
+    void follow_output()
+    {
+        if (!engine)
+            return;
+        if (mastering && m_attached_resolved && m_attached == resolve(selected()))
+            return;
+        static_cast<void>(attach_mastering(resolve(selected())));
     }
 
     void enqueue(int style, float volume)
@@ -147,42 +333,62 @@ struct hitsound_player::implementation
                 return;
             if (requests.size() >= 32)
                 requests.pop_front();
-            requests.push_back({style, volume});
+            requests.push_back({request::kind::play, style, volume, {}});
+        }
+        wake.notify_one();
+    }
+
+    void select(const std::string& id)
+    {
+        {
+            std::scoped_lock lock(mutex);
+            if (stopping || m_selected == id)
+                return;
+            m_selected = id;
+            if (requests.size() >= 32)
+                requests.pop_front();
+            requests.push_back({request::kind::device, 0, 0.0f, id});
         }
         wake.notify_one();
     }
 
     void run()
     {
+        scan();
         for (;;)
         {
             request next{};
+            bool have{};
             {
                 std::unique_lock lock(mutex);
-                wake.wait(lock, [&] { return stopping || !requests.empty(); });
+                wake.wait_for(lock, std::chrono::seconds(1), [&] { return stopping || !requests.empty(); });
                 if (stopping && requests.empty())
                     break;
-                next = requests.front();
-                requests.pop_front();
+                if (!requests.empty())
+                {
+                    next = std::move(requests.front());
+                    requests.pop_front();
+                    have = true;
+                }
+            }
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= m_next_scan)
+            {
+                m_next_scan = now + std::chrono::seconds(3);
+                scan();
+            }
+            if (!have)
+            {
+                follow_output();
+                continue;
+            }
+            if (next.type == request::kind::device)
+            {
+                follow_output();
+                continue;
             }
             play_now(next.style, next.volume);
         }
-    }
-
-    bool initialize()
-    {
-        if (engine)
-            return mastering != nullptr;
-        if (FAILED(XAudio2Create(&engine, 0, XAUDIO2_DEFAULT_PROCESSOR)))
-            return false;
-        if (FAILED(engine->CreateMasteringVoice(&mastering)))
-        {
-            engine->Release();
-            engine = nullptr;
-            return false;
-        }
-        voices.reserve(16);
-        return true;
     }
 
     void collect_finished()
@@ -203,7 +409,7 @@ struct hitsound_player::implementation
     {
         const auto index = static_cast<std::size_t>(std::clamp(style, 0, static_cast<int>(sounds.size()) - 1));
         const auto wave = parse_wav(sounds[index].bytes, sounds[index].size);
-        if (!wave || !initialize())
+        if (!wave || !ensure_output())
             return;
         collect_finished();
         if (voices.size() >= 16)
@@ -242,6 +448,28 @@ void hitsound_player::play(int style, float volume)
     if (!m_impl || volume <= 0.0f)
         return;
     m_impl->enqueue(style, std::clamp(volume, 0.0f, 1.0f));
+}
+
+std::vector<sound_device> hitsound_player::devices() const
+{
+    if (!m_impl)
+        return {};
+    std::scoped_lock lock(m_impl->mutex);
+    return m_impl->m_devices;
+}
+
+void hitsound_player::set_device(const std::string& id)
+{
+    if (m_impl)
+        m_impl->select(id);
+}
+
+std::string hitsound_player::device() const
+{
+    if (!m_impl)
+        return {};
+    std::scoped_lock lock(m_impl->mutex);
+    return m_impl->m_selected;
 }
 
 } // namespace features::visuals

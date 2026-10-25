@@ -27,11 +27,18 @@ public:
     // Angles of the newest command, from one resolve of the ring so the slot and the object cannot disagree.
     [[nodiscard]] bool read_angles(foundation::vec3& out, int* out_sequence = nullptr);
 
+    // View angles of the newest command, written in one eight-byte copy so the game cannot observe a
+    // half-updated pair. Reports failure when the ring, the message or the angle triple cannot be
+    // resolved, when the handle is read-only, or when the value read back is not what was written.
+    [[nodiscard]] bool write_angles(const foundation::vec3& angles, int* out_sequence = nullptr);
+
 private:
     static constexpr int k_candidates = 64;
 
     [[nodiscard]] bool probe(std::uintptr_t array, int index, std::chrono::steady_clock::time_point now, view& out);
     [[nodiscard]] bool try_index(std::uintptr_t array, int index, std::chrono::steady_clock::time_point now, view& out);
+    // The address holding the pitch of the newest command, validated on every hop.
+    [[nodiscard]] bool resolve_angles(std::uintptr_t& out_address, int& out_sequence);
     bool fail(std::chrono::steady_clock::time_point now);
 
     int m_consecutive_failures{};

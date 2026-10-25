@@ -28,8 +28,10 @@ constexpr std::array names{"game_loop",
                            "ballistics_tick",
                            "aim_tick",
                            "grenade_aim_tick",
+                           "silent_aim_tick",
                            "movement_loop",
                            "bhop_tick",
+                           "speed_hack_tick",
                            "auto_stop_tick",
                            "anti_flash_tick",
                            "flash_watch_tick",
@@ -65,7 +67,9 @@ constexpr std::array names{"game_loop",
                            "aim_recoil",
                            "aim_trigger",
                            "aim_choose",
-                           "aim_flush"};
+                           "aim_flush",
+                           "automation_tick",
+                           "round_alert"};
 static_assert(names.size() == static_cast<std::size_t>(zone::count));
 
 constexpr std::array counter_names{"map_entity_slots",      "map_entities_seen",   "map_solid_entities",

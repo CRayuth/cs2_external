@@ -151,6 +151,19 @@ struct combat_profile
         bool autowall{true};
         float min_damage{65.0f};
         bool lethal_only{true};
+        // Silent aim carries the approved angle in the user command instead of the mouse, so the camera
+        // stays where the player left it. Needs a writable process handle; ignored without one.
+        bool silent{false};
+        // How far off the crosshair silent aim may keep following a target, in degrees. The first acquisition
+        // is still judged from the view, so this is the ceiling of the extra reach silent aim adds.
+        float silent_max_turn{35.0f};
+        // Independent of the mouse smoothing below: a silent write never moves the camera, so the mouse response
+        // only postpones the angle the shot leaves on. 0 spends the whole remaining step every command; higher
+        // values carry a fraction of it, which spreads a correction over several commands.
+        int silent_smoothing{0};
+        // Visual only: scales the radius of the drawn FOV circle, so the ring stays readable at any aim angle.
+        // Changing it never changes where a shot is allowed to go.
+        float fov_draw_scale{100.0f};
         int hitbox_parts{aim_part::all}; // multi-select body parts (was head_only)
         bool multipoint{true};           // aim at safe registering points, not raw bone center
         bool visible_only{true};         // legacy view; wall behaviour is resolved into checks.walls
@@ -214,11 +227,15 @@ struct combat_profile
         int aimbot_min_damage_override_mode{activation::hold};
         int aimbot_min_damage_override_key{0x05};
         bool aimbot_lethal_only{true};
+        bool aimbot_silent{false};
         int aimbot_hitbox_parts{aim_part::all};
         bool aimbot_multipoint{true};
         bool aimbot_visible_only{true};
         bool aimbot_draw_fov{true};
         foundation::rgba aimbot_fov_color{217, 217, 217, 125};
+        float aimbot_silent_max_turn{35.0f};
+        int aimbot_silent_smoothing{0};
+        float aimbot_fov_draw_scale{100.0f};
         bool aimbot_predictive{false};
         bool aimbot_recoil_sync{false};
         legit_checks aimbot_checks{};
@@ -275,6 +292,7 @@ struct combat_profile
         bool aimbot_autowall{true};
         float aimbot_min_damage{65.0f};
         bool aimbot_lethal_only{true};
+        bool aimbot_silent{false};
         int aimbot_hitbox_parts{aim_part::all};
         bool aimbot_multipoint{true};
         bool aimbot_visible_only{true};

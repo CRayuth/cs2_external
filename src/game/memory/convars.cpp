@@ -5,6 +5,7 @@
 #include <game/memory/catalogs.hpp>
 #include <game/memory/remote_pointer.hpp>
 #include <game/memory/compatibility_contracts.hpp>
+#include <unordered_set>
 
 namespace game
 {
@@ -53,9 +54,27 @@ std::uintptr_t variable_registry::find(const std::uint32_t name_id)
 
 std::unordered_map<std::uint32_t, std::uintptr_t> variable_registry::read_list() const
 {
+    std::unordered_map<std::uint32_t, std::uintptr_t> variables{};
+    for (auto& entry : read_named_list())
+        variables.try_emplace(foundation::identity::of(entry.name), entry.address);
+    return variables;
+}
+
+std::vector<variable_registry::named_variable> variable_registry::snapshot()
+{
+    if (!m_services)
+        return {};
+
+    std::scoped_lock lock(m_mutex);
+    return read_named_list();
+}
+
+std::vector<variable_registry::named_variable> variable_registry::read_named_list() const
+{
     const auto& services = *m_services;
     const auto& process = services.process;
-    std::unordered_map<std::uint32_t, std::uintptr_t> variables{};
+    std::vector<named_variable> variables{};
+    std::unordered_set<std::string> seen{};
 
     const auto cvar = process.locate_vtable_object(services.modules.tier, "CCvar");
     if (!cvar)
@@ -88,8 +107,13 @@ std::unordered_map<std::uint32_t, std::uintptr_t> variable_registry::read_list()
                 std::array<char, k_name_capacity> name{};
                 if (!process.copy(name_address, name.data(), name.size() - 1))
                     continue;
-                if (const std::string_view text{name.data()}; is_valid_cvar_name(text))
-                    variables.try_emplace(foundation::identity::of(text), convar);
+                const std::string_view text{name.data()};
+                if (!is_valid_cvar_name(text))
+                    continue;
+                // One node per name is enough: a repeated entry resolves to the same console variable object.
+                if (!seen.emplace(text).second)
+                    continue;
+                variables.push_back(named_variable{std::string{text}, convar});
             }
         }
 
@@ -99,6 +123,7 @@ std::unordered_map<std::uint32_t, std::uintptr_t> variable_registry::read_list()
             return variables;
         }
         variables.clear();
+        seen.clear();
     }
 
     services.log.warning("[convars] console variable list not found; retrying later.");

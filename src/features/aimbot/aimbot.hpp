@@ -67,6 +67,8 @@ class aimbot_t
 {
 public:
     void on_render(render::draw::draw_list& draw_list);
+    // tick() runs on the combat worker and reset() reaches this object from the combat worker *and* from the
+    // overlay's exit key on the render thread, so both take m_state_mutex. Everything below is guarded by it.
     void tick();
     void reset();
     void seed_tick(ballistics_t& seed_shared);
@@ -141,6 +143,9 @@ private:
                            const target& picked);
     void cancel_scheduled_trigger();
     void reset_aim_tracking();
+    // Bodies of tick() and reset(), run with m_state_mutex already held.
+    void tick_state();
+    void reset_state();
 
     struct trigger_result
     {
@@ -252,6 +257,7 @@ private:
     bool m_pen_color_can_pen{false};
     foundation::source_random m_rng{};
     bool m_rng_seeded{false};
+    std::mutex m_state_mutex{};
     mutable std::mutex m_indicator_mutex{};
     foundation::vec3 m_indicator_point{};
     float m_indicator_fov{};
@@ -261,6 +267,12 @@ private:
     std::uintptr_t m_indicator_bone_cache{};
     int m_indicator_bone{-1};
     foundation::vec3 m_indicator_offset{};
+    // Where the FOV ring belongs while the aim travels through the command instead of the mouse: the head joint
+    // for a head lock, the aim point for any other hitgroup. Valid only together with the flag, and only while
+    // silent transport is on, because a ring in the middle of the screen then frames whatever the player happens
+    // to look at rather than the target the shots are going to.
+    foundation::vec3 m_indicator_ring_center{};
+    bool m_indicator_silent_ring{};
 
     foundation::vec2 m_aim_error{};
 
@@ -312,6 +324,17 @@ private:
     int m_rcs_burst_shots{};
     int m_rcs_input_step{24};
     bool m_rcs_active{false}; // a burst is in progress (recoil accumulated)
+    // True while every view change of this pass travels through the command instead of the mouse. Set by
+    // recoil_control(), which runs whether or not a target was found, and read by the recoil flush and the aim
+    // pass: mixing the two transports in one burst moves the camera while the aim pass believes it does not.
+    bool m_silent_transport{};
+    // Transport probe, diagnostics only: it decides whether the recoil compensation added to the sampled
+    // control angle is already inside the command the game built, or still owed by it. Nothing in the aim
+    // path reads these back, so the answer has to be read out of the journal.
+    float m_rcs_probe_gap_sum{};   // sum of (command pitch - rendered pitch), degrees
+    float m_rcs_probe_punch_sum{}; // sum of the aim punch pitch that compensation answers, degrees
+    int m_rcs_probe_samples{};     // passes folded into the two sums above
+    diagnostics::rate_gate m_rcs_probe_note{std::chrono::seconds(1)};
     std::uint64_t m_combat_sequence{};
 
     foundation::vec3 m_aim_previous_relative_velocity{};

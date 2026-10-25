@@ -5,6 +5,7 @@
 #include <game/state/services.hpp>
 #include <foundation/math/ray_capsule.hpp>
 #include <features/aimbot/aimbot.hpp>
+#include <features/aimbot/command_steering.hpp>
 #include <diagnostics/journal.hpp>
 #include <features/aimbot/aim_control.hpp>
 #include <features/misc/auto_stop.hpp>

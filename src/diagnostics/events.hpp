@@ -112,7 +112,9 @@ namespace diagnostics
     X(autoaccept_click, "autoaccept.click")                                                                            \
     X(autoaccept_blocked, "autoaccept.blocked")                                                                        \
     X(autoaccept_scan, "autoaccept.scan")                                                                              \
-    X(diagnostic_warning, "diagnostic.warning")
+    X(diagnostic_warning, "diagnostic.warning")                                                                             \
+    X(silent_aim_state, "silentaim.state")                                                                                   \
+    X(rcs_transport_probe, "rcs.transport_probe")
 
 enum class event : std::uint16_t
 {

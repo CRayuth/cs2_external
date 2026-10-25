@@ -12,6 +12,8 @@ namespace
 {
 constexpr UINT k_gate_changed_message = WM_APP + 0x321;
 
+constexpr ULONGLONG k_focus_refresh_ms = 15;
+
 // Rejected input is reported at most once per interval; it usually repeats every frame while it lasts
 // (secure desktop, UAC prompt, another integrity level in the foreground).
 diagnostics::rate_gate g_rejected_input_report{std::chrono::seconds{5}};
@@ -26,6 +28,15 @@ void report_rejected_input(const char* kind) noexcept
 [[nodiscard]] constexpr bool contains(pointer_action value, pointer_action flag) noexcept
 {
     return (static_cast<std::uint32_t>(value) & static_cast<std::uint32_t>(flag)) != 0;
+}
+
+[[nodiscard]] constexpr pointer_action release_only(const pointer_action actions) noexcept
+{
+    std::uint32_t kept{};
+    for (const auto& [down, up] : pointer_buttons)
+        if (contains(actions, up))
+            kept |= static_cast<std::uint32_t>(up);
+    return static_cast<pointer_action>(kept);
 }
 } // namespace
 
@@ -53,6 +64,48 @@ input_gateway& bound_input() noexcept
 
 void input_gateway::disconnect() noexcept
 {
+    release_all_injected();
+    stop_key_gate();
+    m_connected.store(false, std::memory_order_release);
+}
+
+void input_gateway::set_target_process(const std::uint32_t process_id) noexcept
+{
+    m_target_process.store(process_id, std::memory_order_release);
+    m_focus_stamp.store(0, std::memory_order_relaxed);
+    m_focus_active.store(true, std::memory_order_release);
+    m_focus_held.store(true, std::memory_order_relaxed);
+}
+
+bool input_gateway::foreground_is_target() const noexcept
+{
+    const auto foreground = ::GetForegroundWindow();
+    const auto root = foreground ? ::GetAncestor(foreground, GA_ROOT) : nullptr;
+    DWORD process_id{};
+    if (root)
+        ::GetWindowThreadProcessId(root, &process_id);
+    if (process_id == 0)
+        return false;
+    const auto target = m_target_process.load(std::memory_order_acquire);
+    return process_id == target || process_id == ::GetCurrentProcessId();
+}
+
+bool input_gateway::accepts_input() const noexcept
+{
+    if (m_target_process.load(std::memory_order_acquire) == 0)
+        return true;
+    const auto now = ::GetTickCount64();
+    auto stamp = m_focus_stamp.load(std::memory_order_relaxed);
+    if (now - stamp >= k_focus_refresh_ms &&
+        m_focus_stamp.compare_exchange_strong(stamp, now, std::memory_order_relaxed))
+    {
+        m_focus_active.store(foreground_is_target(), std::memory_order_release);
+    }
+    return m_focus_active.load(std::memory_order_acquire);
+}
+
+void input_gateway::release_all_injected() noexcept
+{
     const auto buttons = m_injected_pointer_down.load(std::memory_order_acquire);
     for (const auto& [down, up] : pointer_buttons)
         if ((buttons & static_cast<std::uint32_t>(down)) != 0)
@@ -72,8 +125,14 @@ void input_gateway::disconnect() noexcept
     }
     if (release_count)
         keys(std::span{releases}.first(release_count));
-    stop_key_gate();
-    m_connected.store(false, std::memory_order_release);
+}
+
+void input_gateway::supervise_focus() noexcept
+{
+    const auto active = accepts_input();
+    const auto was_active = m_focus_held.exchange(active, std::memory_order_relaxed);
+    if (was_active && !active)
+        release_all_injected();
 }
 
 bool input_gateway::connect() noexcept
@@ -127,6 +186,14 @@ bool input_gateway::pointer(int dx, int dy, pointer_action actions) const noexce
 {
     if (!connected())
         return false;
+    if (!accepts_input())
+    {
+        actions = release_only(actions);
+        if (actions == pointer_action::none)
+            return false;
+        dx = 0;
+        dy = 0;
+    }
     pointer_packet packet{};
     packet.point = {dx, dy};
     if (contains(actions, pointer_action::relative_move))
@@ -196,10 +263,23 @@ bool input_gateway::keys(std::span<const key_transition> transitions) const noex
     if (!connected() || transitions.empty() || transitions.size() > 8)
         return false;
 
-    std::array<key_packet, 8> packets{};
-    for (auto index = std::size_t{}; index < transitions.size(); ++index)
+    std::array<key_transition, 8> scoped{};
+    std::size_t scoped_count{};
+    const bool actuates = accepts_input();
+    for (const auto& transition : transitions)
     {
-        const auto transition = transitions[index];
+        if (transition.pressed && !actuates)
+            continue;
+        scoped[scoped_count++] = transition;
+    }
+    if (scoped_count == 0)
+        return false;
+    const std::span<const key_transition> pending{std::span{scoped}.first(scoped_count)};
+
+    std::array<key_packet, 8> packets{};
+    for (auto index = std::size_t{}; index < pending.size(); ++index)
+    {
+        const auto transition = pending[index];
         auto& packet = packets[index];
         if (!transition.virtual_key || transition.virtual_key >= 256)
             return false;
@@ -209,38 +289,38 @@ bool input_gateway::keys(std::span<const key_transition> transitions) const noex
         packet.flags = encoded.dwFlags;
     }
     s_last_injection_backend = injection_backend::key_native;
-    auto injected = m_key_injector && m_key_injector(packets.data(), static_cast<int>(transitions.size())) != FALSE;
+    auto injected = m_key_injector && m_key_injector(packets.data(), static_cast<int>(pending.size())) != FALSE;
     if (!injected)
     {
         s_last_injection_backend = injection_backend::key_send_input;
         std::array<INPUT, 8> events{};
-        for (std::size_t i = 0; i < transitions.size(); ++i)
+        for (std::size_t i = 0; i < pending.size(); ++i)
         {
             events[i].type = INPUT_KEYBOARD;
-            events[i].ki = encode_key(transitions[i].virtual_key, transitions[i].pressed);
+            events[i].ki = encode_key(pending[i].virtual_key, pending[i].pressed);
         }
-        const auto count = ::SendInput(static_cast<UINT>(transitions.size()), events.data(), sizeof(INPUT));
+        const auto count = ::SendInput(static_cast<UINT>(pending.size()), events.data(), sizeof(INPUT));
         for (std::size_t i = 0; i < count; ++i)
-            m_injected_down[transitions[i].virtual_key].store(transitions[i].pressed, std::memory_order_release);
-        injected = count == transitions.size();
+            m_injected_down[pending[i].virtual_key].store(pending[i].pressed, std::memory_order_release);
+        injected = count == pending.size();
         if (!injected)
         {
             report_rejected_input("keyboard");
             // Release a partially accepted batch so no failed tap leaves a key held.
             for (std::size_t i = 0; i < count; ++i)
             {
-                if (!transitions[i].pressed)
+                if (!pending[i].pressed)
                     continue;
                 auto release = events[i];
                 release.ki.dwFlags |= KEYEVENTF_KEYUP;
                 if (::SendInput(1, &release, sizeof(INPUT)) == 1)
-                    m_injected_down[transitions[i].virtual_key].store(false, std::memory_order_release);
+                    m_injected_down[pending[i].virtual_key].store(false, std::memory_order_release);
             }
         }
     }
     if (injected)
     {
-        for (const auto& transition : transitions)
+        for (const auto& transition : pending)
         {
             if (transition.virtual_key < m_injected_down.size())
                 m_injected_down[transition.virtual_key].store(transition.pressed, std::memory_order_release);
@@ -321,9 +401,14 @@ void input_gateway::apply_movement_gate(const std::array<bool, 256>& desired) no
             // Only when the hook was live: while it was not installed yet the game saw the real
             // transitions and the stored state is stale, so a resume would press a key the user
             // has already released and leave it stuck (Shift after an auto-released grenade).
-            const auto physical = m_movement_physical_down[key].exchange(false, std::memory_order_acq_rel);
-            if (physical && m_gate_hook_ready.load(std::memory_order_acquire))
-                this->key(key, true);
+            const auto recorded = m_movement_physical_down[key].exchange(false, std::memory_order_acq_rel);
+            if (recorded && m_gate_hook_ready.load(std::memory_order_acquire))
+            {
+                if ((::GetAsyncKeyState(key) & 0x8000) != 0)
+                    this->key(key, true);
+                else
+                    this->key(key, false);
+            }
         }
     }
     m_movement_gate_count.store(count, std::memory_order_release);
@@ -370,16 +455,19 @@ LRESULT CALLBACK input_gateway::gate_proc(const int code, const WPARAM message, 
 #endif
     const bool down = message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
     const bool up = message == WM_KEYUP || message == WM_SYSKEYUP;
+    const bool actuates = gateway->accepts_input();
     if (enabled && physical && event.vkCode == key && (down || up))
     {
         gateway->m_gate_physical_down.store(down, std::memory_order_release);
-        return 1;
+        if (actuates)
+            return 1;
     }
     if (physical && event.vkCode < 256 && (down || up) &&
         gateway->m_movement_gated[event.vkCode].load(std::memory_order_relaxed))
     {
         gateway->m_movement_physical_down[event.vkCode].store(down, std::memory_order_release);
-        return 1;
+        if (actuates)
+            return 1;
     }
     return ::CallNextHookEx(nullptr, code, message, parameter);
 }

@@ -76,11 +76,15 @@ static void to_json(json& j, const combat_profile::global_settings& g)
              {"aimbot_min_damage_override_mode", g.aimbot_min_damage_override_mode},
              {"aimbot_min_damage_override_key", g.aimbot_min_damage_override_key},
              {"aimbot_lethal_only", g.aimbot_lethal_only},
+             {"aimbot_silent", g.aimbot_silent},
              {"aimbot_hitbox_parts", g.aimbot_hitbox_parts},
              {"aimbot_multipoint", g.aimbot_multipoint},
              {"aimbot_visible_only", g.aimbot_visible_only},
              {"aimbot_draw_fov", g.aimbot_draw_fov},
              {"aimbot_fov_color", g.aimbot_fov_color},
+             {"aimbot_silent_max_turn", g.aimbot_silent_max_turn},
+             {"aimbot_silent_smoothing", g.aimbot_silent_smoothing},
+             {"aimbot_fov_draw_scale", g.aimbot_fov_draw_scale},
              {"aimbot_predictive", g.aimbot_predictive},
              {"aimbot_recoil_sync", g.aimbot_recoil_sync},
              {"aimbot_checks", g.aimbot_checks},
@@ -144,11 +148,18 @@ static void from_json(const json& j, combat_profile::global_settings& g)
                    static_cast<int>(combat_profile::activation::toggle));
     g.aimbot_min_damage_override_key = std::clamp(g.aimbot_min_damage_override_key, 0, 255);
     read_field(j, "aimbot_lethal_only", g.aimbot_lethal_only);
+    read_field(j, "aimbot_silent", g.aimbot_silent);
     read_field(j, "aimbot_hitbox_parts", g.aimbot_hitbox_parts);
     read_field(j, "aimbot_multipoint", g.aimbot_multipoint);
     read_field(j, "aimbot_visible_only", g.aimbot_visible_only);
     read_field(j, "aimbot_draw_fov", g.aimbot_draw_fov);
     read_field(j, "aimbot_fov_color", g.aimbot_fov_color);
+    read_field(j, "aimbot_silent_max_turn", g.aimbot_silent_max_turn);
+    g.aimbot_silent_max_turn = std::clamp(g.aimbot_silent_max_turn, 5.0f, 35.0f);
+    read_field(j, "aimbot_silent_smoothing", g.aimbot_silent_smoothing);
+    g.aimbot_silent_smoothing = std::clamp(g.aimbot_silent_smoothing, 0, 10);
+    read_field(j, "aimbot_fov_draw_scale", g.aimbot_fov_draw_scale);
+    g.aimbot_fov_draw_scale = std::clamp(g.aimbot_fov_draw_scale, 5.0f, 400.0f);
     read_field(j, "aimbot_predictive", g.aimbot_predictive);
     read_field(j, "aimbot_recoil_sync", g.aimbot_recoil_sync);
     if (j.contains("aimbot_checks"))
@@ -249,6 +260,7 @@ static void to_json(json& j, const combat_profile::group_overrides& o)
              {"aimbot_autowall", o.aimbot_autowall},
              {"aimbot_min_damage", o.aimbot_min_damage},
              {"aimbot_lethal_only", o.aimbot_lethal_only},
+             {"aimbot_silent", o.aimbot_silent},
              {"aimbot_hitbox_parts", o.aimbot_hitbox_parts},
              {"aimbot_multipoint", o.aimbot_multipoint},
              {"aimbot_visible_only", o.aimbot_visible_only},
@@ -288,6 +300,7 @@ static void from_json(const json& j, combat_profile::group_overrides& o)
     read_field(j, "aimbot_autowall", o.aimbot_autowall);
     read_field(j, "aimbot_min_damage", o.aimbot_min_damage);
     read_field(j, "aimbot_lethal_only", o.aimbot_lethal_only);
+    read_field(j, "aimbot_silent", o.aimbot_silent);
     read_field(j, "aimbot_hitbox_parts", o.aimbot_hitbox_parts);
     read_field(j, "aimbot_multipoint", o.aimbot_multipoint);
     read_field(j, "aimbot_visible_only", o.aimbot_visible_only);
@@ -1355,7 +1368,15 @@ static void to_json(json& j, const visual_profile::crosshair& c)
              {"penetration_enabled", c.penetration_enabled},
              {"penetration_color_yes", c.penetration_color_yes},
              {"penetration_color_no", c.penetration_color_no},
-             {"penetration_min_damage", c.penetration_min_damage}};
+             {"penetration_min_damage", c.penetration_min_damage},
+             {"dynamic", c.dynamic},
+             {"dynamic_gap", c.dynamic_gap},
+             {"dynamic_speed", c.dynamic_speed},
+             {"rgb", c.rgb},
+             {"rgb_speed", c.rgb_speed},
+             {"sniper_mode", c.sniper_mode},
+             {"sniper_width", c.sniper_width},
+             {"hide_when_scoped", c.hide_when_scoped}};
 }
 
 static void from_json(const json& j, visual_profile::crosshair& c)
@@ -1376,6 +1397,18 @@ static void from_json(const json& j, visual_profile::crosshair& c)
     read_field(j, "penetration_color_yes", c.penetration_color_yes);
     read_field(j, "penetration_color_no", c.penetration_color_no);
     read_field(j, "penetration_min_damage", c.penetration_min_damage);
+    read_field(j, "dynamic", c.dynamic);
+    read_field(j, "dynamic_gap", c.dynamic_gap);
+    c.dynamic_gap = std::isfinite(c.dynamic_gap) ? std::clamp(c.dynamic_gap, 0.0f, 40.0f) : 6.0f;
+    read_field(j, "dynamic_speed", c.dynamic_speed);
+    c.dynamic_speed = std::isfinite(c.dynamic_speed) ? std::clamp(c.dynamic_speed, 20.0f, 1000.0f) : 250.0f;
+    read_field(j, "rgb", c.rgb);
+    read_field(j, "rgb_speed", c.rgb_speed);
+    c.rgb_speed = std::isfinite(c.rgb_speed) ? std::clamp(c.rgb_speed, 0.02f, 4.0f) : 0.35f;
+    read_field(j, "sniper_mode", c.sniper_mode);
+    read_field(j, "sniper_width", c.sniper_width);
+    c.sniper_width = std::isfinite(c.sniper_width) ? std::clamp(c.sniper_width, 0.0f, 10.0f) : 2.0f;
+    read_field(j, "hide_when_scoped", c.hide_when_scoped);
 }
 
 static void to_json(json& j, const visual_profile::chams::material& m)
@@ -1575,6 +1608,7 @@ static void to_json(json& j, const general_profile::hitsound& h)
     j = json{{"enabled", h.enabled},
              {"style", h.style},
              {"volume", h.volume},
+             {"device", h.device_id()},
              {"kill_enabled", h.kill_enabled},
              {"kill_style", h.kill_style},
              {"kill_volume", h.kill_volume},
@@ -1590,6 +1624,12 @@ static void from_json(const json& j, general_profile::hitsound& h)
     read_field(j, "enabled", h.enabled);
     read_field(j, "style", h.style);
     read_field(j, "volume", h.volume);
+    if (const auto it = j.find("device"); it != j.end())
+    {
+        std::string device{};
+        it->get_to(device);
+        h.assign_device(device);
+    }
     read_field(j, "kill_enabled", h.kill_enabled);
     read_field(j, "kill_style", h.kill_style);
     read_field(j, "kill_volume", h.kill_volume);
@@ -1602,9 +1642,9 @@ static void from_json(const json& j, general_profile::hitsound& h)
     h.volume = std::clamp(h.volume, 0.0f, 1.0f);
     h.kill_style = std::clamp(h.kill_style, 0, 4);
     h.kill_volume = std::clamp(h.kill_volume, 0.0f, 1.0f);
-    h.damage_size = std::clamp(h.damage_size, 8.0f, 28.0f);
-    h.damage_duration = std::clamp(h.damage_duration, 0.15f, 2.0f);
-    h.damage_rise = std::clamp(h.damage_rise, 0.0f, 100.0f);
+    h.damage_size = std::clamp(h.damage_size, 8.0f, 72.0f);
+    h.damage_duration = std::clamp(h.damage_duration, 0.15f, 3.0f);
+    h.damage_rise = std::clamp(h.damage_rise, 0.0f, 220.0f);
 }
 
 static void to_json(json& j, const general_profile::screen_layout& l)
@@ -1857,6 +1897,7 @@ static void to_json(json& j, const general_profile::nade_helper& n)
              {"height_tolerance", n.height_tolerance},
              {"show_action", n.show_action},
              {"show_distance", n.show_distance},
+             {"show_other_spots", n.show_other_spots},
              {"plaque_background", n.plaque_background},
              {"plaque_text", n.plaque_text},
              {"plaque_accent", n.plaque_accent},
@@ -1881,6 +1922,7 @@ static void from_json(const json& j, general_profile::nade_helper& n)
     read_field(j, "height_tolerance", n.height_tolerance);
     read_field(j, "show_action", n.show_action);
     read_field(j, "show_distance", n.show_distance);
+    read_field(j, "show_other_spots", n.show_other_spots);
     read_field(j, "plaque_background", n.plaque_background);
     read_field(j, "plaque_text", n.plaque_text);
     read_field(j, "plaque_accent", n.plaque_accent);
@@ -1926,6 +1968,30 @@ static void from_json(const json& j, general_profile::edge_jump& e)
         j.at("key").get_to(e.activation_key);
 }
 
+static void to_json(json& j, const general_profile::speed_hack& s)
+{
+    j = json{{"enabled", s.enabled},
+             {"activation_mode", s.activation_mode},
+             {"activation_key", s.activation_key},
+             {"multiplier", s.multiplier}};
+}
+
+static void from_json(const json& j, general_profile::speed_hack& s)
+{
+    read_field(j, "enabled", s.enabled);
+    read_field(j, "activation_mode", s.activation_mode);
+    if (j.contains("activation_key"))
+        j.at("activation_key").get_to(s.activation_key);
+    else if (j.contains("key"))
+        j.at("key").get_to(s.activation_key);
+    read_field(j, "multiplier", s.multiplier);
+    s.activation_mode = std::clamp(s.activation_mode, static_cast<int>(general_profile::speed_hack::always_on),
+                                                   static_cast<int>(general_profile::speed_hack::toggle));
+    s.activation_key = std::clamp(s.activation_key, 0, 255);
+    // Anything beyond 3x is unusable in-game (movement desyncs the server) and reads like an obvious hack.
+    s.multiplier = std::isfinite(s.multiplier) ? std::clamp(s.multiplier, 1.0f, 3.0f) : 1.0f;
+}
+
 static void to_json(json& j, const game_controls& b)
 {
     j = json{{"forward", b.forward}, {"back", b.back}, {"left", b.left},     {"right", b.right},    {"walk", b.walk},
@@ -1967,6 +2033,79 @@ static void from_json(const json& j, general_profile::auto_stop& a)
     a.required_shoot_speed = std::clamp(a.required_shoot_speed, 0.0f, 60.0f);
 }
 
+static void to_json(json& j, const general_profile::automation& a)
+{
+    j = json{{"auto_pistol",
+              json{{"enabled", a.auto_pistol.enabled},
+                   {"hold_ms", a.auto_pistol.hold_ms},
+                   {"interval_ms", a.auto_pistol.interval_ms}}},
+             {"anti_afk",
+              json{{"enabled", a.anti_afk.enabled},
+                   {"hold_ms", a.anti_afk.hold_ms},
+                   {"idle_seconds", a.anti_afk.idle_seconds}}}};
+}
+
+static void from_json(const json& j, general_profile::automation& a)
+{
+    if (j.contains("auto_pistol"))
+    {
+        const auto& p = j.at("auto_pistol");
+        read_field(p, "enabled", a.auto_pistol.enabled);
+        read_field(p, "hold_ms", a.auto_pistol.hold_ms);
+        a.auto_pistol.hold_ms =
+            std::isfinite(a.auto_pistol.hold_ms) ? std::clamp(a.auto_pistol.hold_ms, 1.0f, 40.0f) : 4.0f;
+        read_field(p, "interval_ms", a.auto_pistol.interval_ms);
+        a.auto_pistol.interval_ms =
+            std::isfinite(a.auto_pistol.interval_ms) ? std::clamp(a.auto_pistol.interval_ms, 10.0f, 500.0f) : 60.0f;
+    }
+    if (j.contains("anti_afk"))
+    {
+        const auto& p = j.at("anti_afk");
+        read_field(p, "enabled", a.anti_afk.enabled);
+        read_field(p, "hold_ms", a.anti_afk.hold_ms);
+        a.anti_afk.hold_ms =
+            std::isfinite(a.anti_afk.hold_ms) ? std::clamp(a.anti_afk.hold_ms, 1.0f, 100.0f) : 18.0f;
+        read_field(p, "idle_seconds", a.anti_afk.idle_seconds);
+        a.anti_afk.idle_seconds =
+            std::isfinite(a.anti_afk.idle_seconds) ? std::clamp(a.anti_afk.idle_seconds, 5.0f, 300.0f) : 45.0f;
+    }
+}
+
+static void to_json(json& j, const general_profile::round_alert& r)
+{
+    j = json{{"enabled", r.enabled},
+             {"style", r.style},
+             {"volume", r.volume},
+             {"when_unfocused", r.when_unfocused}};
+}
+
+static void from_json(const json& j, general_profile::round_alert& r)
+{
+    read_field(j, "enabled", r.enabled);
+    read_field(j, "style", r.style);
+    read_field(j, "volume", r.volume);
+    read_field(j, "when_unfocused", r.when_unfocused);
+    r.style = std::clamp(r.style, 0, 4);
+    r.volume = std::isfinite(r.volume) ? std::clamp(r.volume, 0.0f, 1.0f) : 0.6f;
+}
+
+static void to_json(json& j, const general_profile::keystrokes& k)
+{
+    j = json{{"enabled", k.enabled},
+             {"layout", k.layout},
+             {"key_size", k.key_size},
+             {"show_mouse", k.show_mouse}};
+}
+
+static void from_json(const json& j, general_profile::keystrokes& k)
+{
+    read_field(j, "enabled", k.enabled);
+    read_field(j, "layout", k.layout);
+    read_field(j, "key_size", k.key_size);
+    k.key_size = std::isfinite(k.key_size) ? std::clamp(k.key_size, 16.0f, 96.0f) : 34.0f;
+    read_field(j, "show_mouse", k.show_mouse);
+}
+
 static void to_json(json& j, const general_profile& m)
 {
     j = json{{"m_grenades", m.m_grenades},
@@ -1984,8 +2123,12 @@ static void to_json(json& j, const general_profile& m)
              {"m_plant_alert", m.m_plant_alert},
              {"m_bunny_hop", m.m_bunny_hop},
              {"m_edge_jump", m.m_edge_jump},
+             {"m_speed_hack", m.m_speed_hack},
              {"m_game_controls", m.m_game_controls},
              {"m_auto_stop", m.m_auto_stop},
+             {"m_automation", m.m_automation},
+             {"m_round_alert", m.m_round_alert},
+             {"m_keystrokes", m.m_keystrokes},
              {"language", m.language},
              {"menu_scale", m.menu_scale},
              {"palette", json{{"background", m.palette.background},
@@ -2021,8 +2164,12 @@ static void from_json(const json& j, general_profile& m)
     read_field(j, "m_plant_alert", m.m_plant_alert);
     read_field(j, "m_bunny_hop", m.m_bunny_hop);
     read_field(j, "m_edge_jump", m.m_edge_jump);
+    read_field(j, "m_speed_hack", m.m_speed_hack);
     read_field(j, "m_game_controls", m.m_game_controls);
     read_field(j, "m_auto_stop", m.m_auto_stop);
+    read_field(j, "m_automation", m.m_automation);
+    read_field(j, "m_round_alert", m.m_round_alert);
+    read_field(j, "m_keystrokes", m.m_keystrokes);
     read_field(j, "language", m.language);
     m.language = std::clamp(m.language, 0, general_profile::k_language_count - 1);
     // The config is the only persistent home for the language, so applying it
@@ -2070,11 +2217,15 @@ combat_profile::resolved_config combat_profile::get(std::uint32_t weapon_type) c
         combat_profile::activation_active(gl.aimbot_min_damage_override_mode, gl.aimbot_min_damage_override_key))
         cfg.aimbot.min_damage = gl.aimbot_min_damage_override;
     cfg.aimbot.lethal_only = ov.use_global ? gl.aimbot_lethal_only : ov.aimbot_lethal_only;
+    cfg.aimbot.silent = ov.use_global ? gl.aimbot_silent : ov.aimbot_silent;
     cfg.aimbot.hitbox_parts = ov.use_global ? gl.aimbot_hitbox_parts : ov.aimbot_hitbox_parts;
     cfg.aimbot.multipoint = ov.use_global ? gl.aimbot_multipoint : ov.aimbot_multipoint;
     cfg.aimbot.visible_only = ov.use_global ? gl.aimbot_visible_only : ov.aimbot_visible_only;
     cfg.aimbot.draw_fov = gl.aimbot_draw_fov;
     cfg.aimbot.fov_color = gl.aimbot_fov_color;
+    cfg.aimbot.silent_max_turn = std::clamp(gl.aimbot_silent_max_turn, 5.0f, 35.0f);
+    cfg.aimbot.silent_smoothing = std::clamp(gl.aimbot_silent_smoothing, 0, 10);
+    cfg.aimbot.fov_draw_scale = std::clamp(gl.aimbot_fov_draw_scale, 5.0f, 400.0f);
     cfg.aimbot.predictive = ov.use_global ? gl.aimbot_predictive : ov.aimbot_predictive;
     cfg.aimbot.recoil_sync = ov.use_global ? gl.aimbot_recoil_sync : ov.aimbot_recoil_sync;
     cfg.aimbot.checks = ov.use_global ? gl.aimbot_checks : ov.aimbot_checks;

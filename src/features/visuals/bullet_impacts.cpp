@@ -647,7 +647,7 @@ void bullet_impacts_t::emit_confirmed_hit(const std::uintptr_t pawn, const found
             killed ? features::visuals::event_category::kill : features::visuals::event_category::hit);
     if (m_config_snapshot->general.m_hitmarker.enabled)
     {
-        m_hitmarkers.push_back({position, now});
+        m_hitmarkers.push_back({position, now, pawn});
         if (m_hitmarkers.size() > 32)
             m_hitmarkers.erase(m_hitmarkers.begin());
     }
@@ -658,7 +658,7 @@ void bullet_impacts_t::emit_confirmed_hit(const std::uintptr_t pawn, const found
         features::visuals::hitsounds().play(feedback.style, feedback.volume);
     if (feedback.show_damage)
     {
-        m_damage_popups.push_back({position, std::clamp(damage, 1, 1000), now});
+        m_damage_popups.push_back({position, std::clamp(damage, 1, 1000), now, pawn});
         if (m_damage_popups.size() > 32)
             m_damage_popups.erase(m_damage_popups.begin());
     }
@@ -869,6 +869,29 @@ void bullet_impacts_t::resolve_server_damage()
     }
 }
 
+foundation::vec3 bullet_impacts_t::marker_anchor(const std::uintptr_t pawn, const foundation::vec3& frozen) noexcept
+{
+    // A hit belongs to a target, not to a place. Drawn at the point that was hit, the mark drifts off a running
+    // enemy within a fraction of a second and reads as a broken indicator, so anchor it to the player's body
+    // while that player is still known and standing.
+    if (!pawn)
+        return frozen;
+    const auto players = game::world().players();
+    if (!players)
+        return frozen;
+    for (const auto& player : *players)
+    {
+        if (player.pawn != pawn)
+            continue;
+        // A body stays where it fell: once the target is down the impact point is the right place again, and a
+        // target whose snapshot is incomplete falls back to the same point rather than to the world origin.
+        if (player.health <= 0 || !finite_vector(player.collision_center))
+            return frozen;
+        return player.collision_center;
+    }
+    return frozen;
+}
+
 void bullet_impacts_t::render_hitmarkers(render::draw::draw_list& draw_list, const render_snapshot& frame)
 {
     const auto& cfg = frame.config->general.m_hitmarker;
@@ -891,7 +914,7 @@ void bullet_impacts_t::render_hitmarkers(render::draw::draw_list& draw_list, con
 
     for (const auto& marker : frame.markers)
     {
-        const auto screen = game::camera().project(marker.position);
+        const auto screen = game::camera().project(marker_anchor(marker.pawn, marker.position));
         if (!game::camera().projection_valid(screen))
             continue;
 
@@ -933,11 +956,11 @@ void bullet_impacts_t::render_damage_numbers(render::draw::draw_list& draw_list,
     if (!base_font)
         return;
     const auto now = std::chrono::steady_clock::now();
-    const auto duration = std::clamp(cfg.damage_duration, 0.15f, 2.0f);
+    const auto duration = std::clamp(cfg.damage_duration, 0.15f, 3.0f);
 
     for (const auto& popup : frame.damage)
     {
-        const auto projected = game::camera().project(popup.position);
+        const auto projected = game::camera().project(marker_anchor(popup.pawn, popup.position));
         if (!game::camera().projection_valid(projected))
             continue;
         const auto elapsed = std::chrono::duration<float>(now - popup.timestamp).count();
@@ -950,11 +973,12 @@ void bullet_impacts_t::render_damage_numbers(render::draw::draw_list& draw_list,
             continue;
 
         auto font = *base_font;
-        font.font_size = std::clamp(cfg.damage_size, 8.0f, 28.0f) * (1.08f - 0.08f * std::min(phase / 0.2f, 1.0f));
+        font.font_size = std::clamp(cfg.damage_size, 8.0f, 72.0f) * (1.08f - 0.08f * std::min(phase / 0.2f, 1.0f));
         const auto text = "-" + std::to_string(popup.damage);
         const auto [width, height] = render::draw::measure_text(text, &font);
-        const auto x = std::floor(projected.x - width * 0.5f + eased * 5.0f);
-        const auto y = std::floor(projected.y - height * 0.5f - eased * std::clamp(cfg.damage_rise, 0.0f, 100.0f));
+        const auto scale = std::clamp(cfg.damage_size, 8.0f, 72.0f) / 18.0f;
+        const auto x = std::floor(projected.x - width * 0.5f + eased * 5.0f * scale);
+        const auto y = std::floor(projected.y - height * 0.5f - eased * std::clamp(cfg.damage_rise, 0.0f, 220.0f) * scale);
         draw_list.add_text(x, y, text, &font,
                            render::draw::rgba{cfg.damage_color.r, cfg.damage_color.g, cfg.damage_color.b, alpha},
                            render::draw::text_style::outlined);
@@ -1568,11 +1592,11 @@ void bullet_impacts_t::collect_impact_hitmarkers(std::uintptr_t pawn)
     const auto pose_frame = game::render_poses().latest();
     const auto now = std::chrono::steady_clock::now();
     const auto& feedback_cfg = m_config_snapshot->general.m_hitsound;
-    const auto emit_damage = [&](const foundation::vec3& position, int damage)
+    const auto emit_damage = [&](const std::uintptr_t pawn, const foundation::vec3& position, int damage)
     {
         if (!feedback_cfg.show_damage || damage <= 0)
             return;
-        m_damage_popups.push_back({position, std::clamp(damage, 1, 1000), now});
+        m_damage_popups.push_back({position, std::clamp(damage, 1, 1000), now, pawn});
         if (m_damage_popups.size() > 32)
             m_damage_popups.erase(m_damage_popups.begin());
     };
@@ -1594,7 +1618,7 @@ void bullet_impacts_t::collect_impact_hitmarkers(std::uintptr_t pawn)
                                      : std::vector<game::player_snapshot>::const_iterator{};
         if (players && current != players->end() && current->health < it->health_before)
         {
-            emit_damage(it->position, it->health_before - current->health);
+            emit_damage(it->pawn, it->position, it->health_before - current->health);
             resolved_damage.push_back(it->pawn);
             it = m_pending_damage.erase(it);
             continue;
@@ -1802,7 +1826,7 @@ void bullet_impacts_t::tick()
     const auto lifetime = std::clamp(m_config_snapshot->general.m_hitmarker.duration, 0.05f, 2.0f);
     std::erase_if(m_hitmarkers, [&](const auto& item)
                   { return std::chrono::duration<float>(now - item.timestamp).count() >= lifetime; });
-    std::erase_if(m_damage_popups, [&](const auto& item) { return now - item.timestamp >= std::chrono::seconds(2); });
+    std::erase_if(m_damage_popups, [&](const auto& item) { return now - item.timestamp >= std::chrono::seconds(4); });
     auto frame = m_render_pool.acquire();
     frame->config = m_config_snapshot;
     frame->tracers = m_tracers;

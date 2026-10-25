@@ -130,6 +130,10 @@ public:
     // Frees every owner's keys at once (the menu opening, shutdown).
     void clear_movement_gates() noexcept;
     [[nodiscard]] bool physical_key_down(std::uint16_t virtual_key) const noexcept;
+    void set_target_process(std::uint32_t process_id) noexcept;
+    [[nodiscard]] bool accepts_input() const noexcept;
+    void release_all_injected() noexcept;
+    void supervise_focus() noexcept;
     [[nodiscard]] bool key_gate_held() const noexcept { return m_gate_physical_down.load(std::memory_order_acquire); }
     // True when the last attempt to install the keyboard hook failed (the notice plate tells the player).
     [[nodiscard]] bool hook_failed() const noexcept { return m_hook_failed.load(std::memory_order_acquire); }
@@ -191,6 +195,11 @@ private:
     std::atomic<std::uint16_t> m_movement_gate_count{};
     mutable std::array<std::atomic<bool>, 256> m_injected_down{};
     HHOOK m_gate_hook{};
+    std::atomic<std::uint32_t> m_target_process{};
+    mutable std::atomic<ULONGLONG> m_focus_stamp{};
+    mutable std::atomic<bool> m_focus_active{true};
+    std::atomic<bool> m_focus_held{true};
+    [[nodiscard]] bool foreground_is_target() const noexcept;
 };
 
 // The gateway the application connected, for features and scripts that send input. Bound once at startup by the

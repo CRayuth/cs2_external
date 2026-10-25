@@ -12,6 +12,10 @@
 #include <game/state/level.hpp>
 #include <render/text/localization.hpp>
 #include <resources/nades/nade_data.hpp>
+#include <resources/nades/nade_match.hpp>
+#include <resources/nades/nade_overlay.hpp>
+#include <platform/windows/storage.hpp>
+#include <diagnostics/log.hpp>
 
 #include <string>
 #include <string_view>
@@ -56,34 +60,52 @@ namespace
 
 namespace nd = resources::nades;
 
-// The map-name probe can return anything from a bare identifier to a full
-// vpk path, so reduce whatever it found to the plain level name.
-[[nodiscard]] std::string_view normalize_map(std::string_view raw)
+// User-supplied lineups are read from one folder under the data root. Naming the folder touches no
+// disk; it is created when a level is first reported, not on every pass.
+[[nodiscard]] std::filesystem::path lineup_overlay_folder()
 {
-    if (const auto slash = raw.find_last_of("/\\"); slash != std::string_view::npos)
-    {
-        raw.remove_prefix(slash + 1);
-    }
-
-    if (const auto dot = raw.find('.'); dot != std::string_view::npos)
-    {
-        raw = raw.substr(0, dot);
-    }
-
-    return raw;
+    const auto& root = platform::windows::runtime_storage::paths().root;
+    return root.empty() ? std::filesystem::path{} : root / L"nades";
 }
 
-[[nodiscard]] const nd::map_entries* find_map(std::string_view name)
+std::mutex g_lineup_report_mutex{};
+std::string g_reported_level{};
+
+// One journal record per level, because collect() runs on every pass: which table is in use, whether the
+// level name had to be inferred from a variant, and what the custom folder contributed.
+//
+// These are warnings, not info: logger::info() compiles away outside a console build, so an info line
+// would be invisible in exactly the shipped builds where a player needs to know which table was used.
+void report_lineup_source(const std::string_view raw_name, const nd::map_resolution& resolution)
 {
-    for (const auto& candidate : nd::k_maps)
+    auto folder = lineup_overlay_folder();
+    std::scoped_lock lock(g_lineup_report_mutex);
+    if (g_reported_level == raw_name)
+        return;
+    g_reported_level.assign(raw_name);
+
+    if (!folder.empty())
     {
-        if (name == candidate.map)
-        {
-            return &candidate;
-        }
+        std::error_code error{};
+        std::filesystem::create_directories(folder, error);
     }
 
-    return nullptr;
+    if (!resolution.map)
+        diagnostics::process_log().warning("[lineups] level \"{}\" is not in the lineup database; custom files only",
+                                          raw_name);
+    else if (resolution.approximate)
+        diagnostics::process_log().warning(
+            "[lineups] level \"{}\" uses the \"{}\" table by name match; if that variant changed the layout, some "
+            "markers will be wrong",
+            raw_name, resolution.name);
+
+    const auto& overlay = nd::nade_overlay();
+    // Only when the folder actually did something: an empty custom folder is the normal case.
+    if (overlay.loaded_rows() || overlay.rejected_files())
+        diagnostics::process_log().warning("[lineups] custom rows: {}, rejected: {}, folder: {}",
+                                          overlay.loaded_rows(), overlay.rejected_files(),
+                                          folder.empty() ? std::string{"<no data root>"}
+                                                         : platform::windows::data_storage::plain_path(folder).string());
 }
 
 // Angular distance between the current view and a lineup's stored angles.
@@ -246,10 +268,12 @@ std::string nade_helper_t::throw_instruction(const lineup_view& lineup)
     return std::vformat(render::localization::tr("Hold {}, {}, release"), std::make_format_args(button, keys));
 }
 
-bool nade_helper_t::collect(const foundation::vec3& player_pos, std::vector<lineup_view>& out) const
+bool nade_helper_t::collect(const foundation::vec3& player_pos, std::vector<lineup_view>& out,
+                            lineup_inventory& inventory) const
 {
     const auto runtime_settings = config::get_runtime_snapshot();
     out.clear();
+    inventory = {};
 
     const auto kind = resolve_kind(game::local_player().weapon_vdata());
     if (kind == 0xff)
@@ -258,30 +282,45 @@ bool nade_helper_t::collect(const foundation::vec3& player_pos, std::vector<line
     }
 
     const auto map_name = game::level().name();
-    const auto map = map_name ? find_map(normalize_map(*map_name)) : nullptr;
-    if (!map)
+    if (!map_name)
+    {
+        return false;
+    }
+    const auto resolution = nd::resolve_map(*map_name);
+
+    // A level the database does not know is still worth reading the custom folder for: that is how a
+    // map outside the generated tables gets lineups at all.
+    const auto key = resolution.map ? std::string{resolution.name} : std::string{nd::normalize_map_name(*map_name)};
+    if (key.empty())
     {
         return false;
     }
 
+    nd::nade_overlay().reload_for(key, lineup_overlay_folder());
+    report_lineup_source(*map_name, resolution);
+    const auto* custom = nd::nade_overlay().rows();
+
     const auto& cfg = runtime_settings->general.m_nade_helper;
     const auto max_distance_sqr = cfg.draw_distance * cfg.draw_distance;
 
-    for (std::uint32_t i = 0; i < map->count; ++i)
+    const auto append = [&](const nd::entry& entry)
     {
-        const auto& entry = map->data[i];
         if (static_cast<std::uint8_t>(entry.type) != kind)
         {
-            continue;
+            return;
         }
 
         const foundation::vec3 position{entry.x, entry.y, entry.z};
         const auto distance_sqr = position.distance_sqr(player_pos);
         if (distance_sqr > max_distance_sqr)
         {
-            continue;
+            // Counted anyway: it is the only way to tell a radius that is too small from a map that
+            // genuinely has nothing else on it.
+            ++inventory.out_of_range;
+            return;
         }
 
+        ++inventory.in_range;
         out.push_back(lineup_view{
             .name = entry.name,
             .action = entry.action,
@@ -295,12 +334,38 @@ bool nade_helper_t::collect(const foundation::vec3& player_pos, std::vector<line
             .manual = entry.manual,
             .distance = std::sqrt(distance_sqr),
         });
+    };
+
+    if (resolution.map)
+    {
+        for (std::uint32_t i = 0; i < resolution.map->count; ++i)
+        {
+            append(resolution.map->data[i]);
+        }
+    }
+
+    if (custom)
+    {
+        for (const auto& entry : *custom)
+        {
+            append(entry);
+        }
+    }
+
+    if (out.empty())
+    {
+        inventory.status = inventory.out_of_range > 0
+                               ? lineup_availability::out_of_range
+                               : (resolution.map ? lineup_availability::no_records
+                                                 : lineup_availability::unknown_map);
+        return false;
     }
 
     // Nearest last: painters order, so the closest plaque ends up on top.
     std::sort(out.begin(), out.end(),
               [](const lineup_view& a, const lineup_view& b) { return a.distance > b.distance; });
 
+    inventory.status = lineup_availability::matched;
     return !out.empty();
 }
 
@@ -350,6 +415,36 @@ void nade_helper_t::reset_lock()
     m_lock_yaw = 0.0f;
 }
 
+void nade_helper_t::phase_clock::reset(const std::uint32_t tick, const std::chrono::steady_clock::time_point now)
+{
+    anchor = tick;
+    elapsed = 0;
+    anchored = true;
+    started = now;
+}
+
+void nade_helper_t::phase_clock::advance(const std::uint32_t tick)
+{
+    if (!anchored)
+        return;
+    const auto delta = static_cast<std::int32_t>(tick - anchor);
+    if (delta > 0)
+        elapsed += static_cast<std::uint32_t>(delta);
+    anchor = tick;
+}
+
+bool nade_helper_t::phase_clock::reached(const std::uint32_t ticks,
+                                         const std::chrono::steady_clock::time_point now) const
+{
+    if (ticks == 0)
+        return true;
+    if (!anchored || elapsed < ticks)
+        return false;
+    constexpr auto authored_seconds_per_tick{1.0 / static_cast<double>(nd::k_authored_tick_rate)};
+    const auto authored_span{std::chrono::duration<double>(static_cast<double>(ticks) * authored_seconds_per_tick)};
+    return now - started >= std::chrono::duration_cast<std::chrono::steady_clock::duration>(authored_span);
+}
+
 void nade_helper_t::on_render(render::draw::draw_list& draw_list)
 {
     const auto runtime_settings = config::get_runtime_snapshot();
@@ -366,8 +461,12 @@ void nade_helper_t::on_render(render::draw::draw_list& draw_list)
     }
 
     const auto player_pos = local_origin(pawn);
-    if (!collect(player_pos, m_render_scratch))
+    lineup_inventory inventory{};
+    if (!collect(player_pos, m_render_scratch, inventory))
     {
+        // Nothing close by. Name the reason instead of leaving the player to guess whether this map
+        // has no lineups of this type, or whether the draw radius is hiding them.
+        draw_inventory_notice(draw_list, inventory, cfg.draw_distance);
         return;
     }
 
@@ -378,7 +477,8 @@ void nade_helper_t::on_render(render::draw::draw_list& draw_list)
     const auto armed_index = select_armed(m_render_scratch, view_angles);
 
     // Once the player is standing on a spot, everything else on the map is
-    // noise -- they have already chosen. Draw only what belongs to this spot.
+    // noise -- they have already chosen. Draw only what belongs to this spot,
+    // unless they asked to keep the rest of the map in view as well.
     const auto occupied = armed_index >= 0;
 
     for (std::size_t i = 0; i < m_render_scratch.size(); ++i)
@@ -386,7 +486,7 @@ void nade_helper_t::on_render(render::draw::draw_list& draw_list)
         const auto& lineup = m_render_scratch[i];
         const auto in_zone = lineup.distance <= cfg.stand_radius;
 
-        if (occupied && !in_zone)
+        if (occupied && !in_zone && !cfg.show_other_spots)
         {
             continue;
         }
@@ -513,6 +613,37 @@ void nade_helper_t::draw_plaque(render::draw::draw_list& draw_list, const lineup
     // The world point is the anchor's bottom, so lift the box above it.
     const auto [_, title_h] = render::draw::measure_text(lineup.name, render::fonts().menu_semibold_13);
     draw_text_plaque(draw_list, screen.x, screen.y - (title_h + 26.0f), lineup.name, subtitle, cfg.plaque_accent, fade);
+}
+
+void nade_helper_t::draw_inventory_notice(render::draw::draw_list& draw_list, const lineup_inventory& inventory,
+                                         const float radius) const
+{
+    if (inventory.status == lineup_availability::unavailable || inventory.status == lineup_availability::matched)
+        return;
+
+    const auto [width, height] = render::draw::get_display_size();
+    const auto accent = render::draw::rgba{245, 200, 120, 255};
+    switch (inventory.status)
+    {
+        case lineup_availability::out_of_range:
+            // The radius is a number with no visible effect; naming how much it hides turns "there are
+            // no lineups" into a setting the player can actually decide about.
+            draw_text_plaque(draw_list, width * 0.5f, height - 74.0f, render::localization::tr("Lineups out of range"),
+                             std::format("{} · {:.0f}u", inventory.out_of_range, radius), accent, 0.8f);
+            break;
+        case lineup_availability::no_records:
+            draw_text_plaque(draw_list, width * 0.5f, height - 74.0f,
+                             render::localization::tr("No lineups of this type on this map"),
+                             render::localization::tr("Add them in nades/<map>.json"), accent, 0.6f);
+            break;
+        case lineup_availability::unknown_map:
+            draw_text_plaque(draw_list, width * 0.5f, height - 74.0f,
+                             render::localization::tr("This map is not in the lineup database"),
+                             render::localization::tr("Add it in nades/<map>.json"), accent, 0.6f);
+            break;
+        default:
+            break;
+    }
 }
 
 void nade_helper_t::draw_stand_marker(render::draw::draw_list& draw_list, const lineup_view& lineup,
@@ -723,7 +854,8 @@ void nade_helper_t::tick()
         return;
     }
     const auto player_pos = local_origin(pawn);
-    if (!collect(player_pos, m_tick_scratch))
+    lineup_inventory tick_inventory{};
+    if (!collect(player_pos, m_tick_scratch, tick_inventory))
     {
         reset_lock();
         return;
@@ -869,8 +1001,8 @@ void nade_helper_t::cancel_throw(const bool latch)
     m_active_weapon = 0;
     m_throw_phase = throw_phase::idle;
     m_phase_tick = 0;
-    m_run_start_tick = 0;
-    m_jump_tick = 0;
+    m_run_clock = {};
+    m_jump_clock = {};
     m_aim_error = {};
     m_aim_velocity = {};
     m_last_aim_update = {};
@@ -1074,10 +1206,11 @@ void nade_helper_t::drive_throw(const std::uintptr_t pawn, const std::uintptr_t 
                         cancel_throw(true);
                         return;
                     }
-                    m_run_start_tick = tick;
+                    m_run_clock.reset(tick, now);
                 }
                 m_throw_phase = throw_phase::running;
-                if (tick - m_run_start_tick < m_active_lineup.run_ticks)
+                m_phase_started = now;
+                if (!m_run_clock.reached(m_active_lineup.run_ticks, now))
                     return;
             }
             else if (!(m_active_lineup.actions & nd::action_jump))
@@ -1088,7 +1221,21 @@ void nade_helper_t::drive_throw(const std::uintptr_t pawn, const std::uintptr_t 
             [[fallthrough]];
         }
         case throw_phase::running:
-            if (tick - m_run_start_tick < m_active_lineup.run_ticks)
+            // The run-up clock is only anchored when the helper presses +forward itself. A lineup that asks for
+            // a jump with no run-up, or a pass that reached here with +forward already held, would otherwise
+            // wait on a clock that can never advance, and nothing else ends this phase.
+            if (!m_run_clock.anchored)
+            {
+                m_run_clock.reset(tick, now);
+                m_phase_started = now;
+            }
+            if (now - m_phase_started > std::chrono::milliseconds(5000))
+            {
+                cancel_throw(true);
+                return;
+            }
+            m_run_clock.advance(tick);
+            if (!m_run_clock.reached(m_active_lineup.run_ticks, now))
                 return;
             if (m_active_lineup.actions & nd::action_jump)
             {
@@ -1097,7 +1244,7 @@ void nade_helper_t::drive_throw(const std::uintptr_t pawn, const std::uintptr_t 
                     cancel_throw(true);
                     return;
                 }
-                m_jump_tick = tick;
+                m_jump_clock.reset(tick, now);
                 m_phase_started = now;
                 m_throw_phase = throw_phase::jumping;
             }
@@ -1106,9 +1253,9 @@ void nade_helper_t::drive_throw(const std::uintptr_t pawn, const std::uintptr_t 
             return;
         case throw_phase::jumping:
         {
-            const auto elapsed_ticks = tick - m_jump_tick;
+            m_jump_clock.advance(tick);
             const auto after_jump = m_active_lineup.after_jump_ticks;
-            if (elapsed_ticks < after_jump)
+            if (!m_jump_clock.reached(after_jump, now))
                 return;
 
             if (after_jump == 0)
@@ -1153,18 +1300,31 @@ void nade_helper_t::aim_at(const lineup_view& lineup, const foundation::vec3& vi
     const auto now = std::chrono::steady_clock::now();
 
     constexpr auto m_yaw{0.022f};
+    const auto pawn = game::local_player().pawn();
     const auto sensitivity = game::variables().get<float>(CONVAR("sensitivity"_id));
-    const auto fov_adjust = game::bound_memory().process.load<float>(
-        game::local_player().pawn() + SCHEMA("C_BasePlayerPawn", "m_flFOVSensitivityAdjust"_id));
+    float fov_adjust{};
+    const auto have_fov_adjust =
+        pawn != 0 &&
+        game::bound_memory().process.copy(pawn + SCHEMA("C_BasePlayerPawn", "m_flFOVSensitivityAdjust"_id),
+                                          &fov_adjust, sizeof(fov_adjust));
     const auto deg_per_pixel = sensitivity * m_yaw * fov_adjust;
 
-    if (deg_per_pixel <= 0.0f)
+    // A range test on its own lets NaN through, because NaN <= 0.0f is false. A non-finite divisor would
+    // turn the pixel conversion below into a float -> int cast of a non-finite value, which is undefined and
+    // reaches the game as a mouse delta of INT_MIN.
+    if (!have_fov_adjust || !std::isfinite(deg_per_pixel) || deg_per_pixel < 0.0001f || deg_per_pixel > 1.0f)
     {
+        m_aim_error = {};
         return;
     }
 
     auto delta_x = lineup.pitch - view_angles.x;
     auto delta_y = foundation::wrap_yaw(lineup.yaw - view_angles.y);
+    if (!std::isfinite(delta_x) || !std::isfinite(delta_y))
+    {
+        m_aim_error = {};
+        return;
+    }
 
     out_error = std::sqrt(delta_x * delta_x + delta_y * delta_y);
 
@@ -1196,9 +1356,11 @@ void nade_helper_t::aim_at(const lineup_view& lineup, const foundation::vec3& vi
     m_last_aim_update = now;
 
     // Sub-pixel remainder is carried between ticks, otherwise the truncation
-    // below would stall the aim short of the target on low smoothing values.
-    m_aim_error.x += -delta_y / deg_per_pixel;
-    m_aim_error.y += delta_x / deg_per_pixel;
+    // below would stall the aim short of the target on low smoothing values. The accumulator stays bounded:
+    // an aim that never converges must not be able to grow it past what the cast below may legally hold.
+    constexpr auto k_max_pending_pixels{4096.0f};
+    m_aim_error.x = std::clamp(m_aim_error.x + -delta_y / deg_per_pixel, -k_max_pending_pixels, k_max_pending_pixels);
+    m_aim_error.y = std::clamp(m_aim_error.y + delta_x / deg_per_pixel, -k_max_pending_pixels, k_max_pending_pixels);
 
     const auto dx = static_cast<int>(m_aim_error.x);
     const auto dy = static_cast<int>(m_aim_error.y);
