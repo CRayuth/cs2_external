@@ -56,6 +56,14 @@ public:
     void rearm() noexcept;
 
     [[nodiscard]] bool armed() const noexcept;
+
+    // Whether a silent shot can be carried at all this pass. The command ring is the transport this service
+    // owns, and the injected HvH module is a second one for exactly the same approved angle, so a broken ring
+    // does not have to put the shot back on the mouse while the module is still taking every command. Aiming
+    // falls back to the mouse only when neither can deliver: a transport that suppresses the move and lands
+    // nothing is worse than the move it replaced.
+    [[nodiscard]] bool live() const noexcept;
+
     [[nodiscard]] std::uint64_t steered() const noexcept
     {
         return m_steered.load(std::memory_order_relaxed);

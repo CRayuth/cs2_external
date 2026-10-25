@@ -12,7 +12,7 @@ void aimbot_t::recoil_control(const config::combat_profile::aimbot& cfg, bool de
     // bottom of this function also runs when no target was found and aimbot() was never reached. defer_input
     // is the aimbot's own "this pass publishes to the command" signal: without it a recoil-only profile would
     // have its mouse compensation suppressed while nothing is ever published to replace it.
-    m_silent_transport = cfg.silent && defer_input && command_steering().healthy();
+    m_silent_transport = cfg.silent && defer_input && command_steering().live();
     const auto clear_correction = [this](bool clear_burst)
     {
         m_rcs_raw = {};
@@ -244,9 +244,10 @@ void aimbot_t::aimbot(const foundation::vec3& eye_pos, const foundation::vec3& v
     }
     // Silent aim replaces the transport only. Every decision below is still taken against the angle the
     // shot leaves at, which with a silent transport is the control angle destined for the command ring.
-    // healthy(), not just available(): a writable handle that cannot resolve the ring would otherwise leave
-    // the aim pass suppressing the mouse and steering nothing, while still reporting that it aims silently.
-    const auto silent = cfg.silent && command_steering().healthy();
+    // live(), not available(): a writable handle that cannot resolve the ring would otherwise leave the aim
+    // pass suppressing the mouse and steering nothing while still reporting that it aims silently. The
+    // injected module counts as a transport precisely because it can carry the angle the ring cannot.
+    const auto silent = cfg.silent && command_steering().live();
     if (!silent)
         command_steering().clear();
     if (local_checks_blocked(cfg.checks) ||

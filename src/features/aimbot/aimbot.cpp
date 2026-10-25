@@ -1,8 +1,38 @@
 #include <stdafx.hpp>
 #include <features/aimbot/aimbot_internal.hpp>
+#include <features/hvh/hvh.hpp>
 
 namespace features::aimbot
 {
+namespace
+{
+// HvH rage lock. When the injected module's panel asks for rage, this aimbot runs even though its own switch
+// may be off, and it runs on the rage parameters rather than the profile's: always active, a fixed cone, every
+// hitgroup, and the wall policy the rage autowall asks for. The rest of the profile still decides the humanising,
+// the smoothing and the local checks, because rage is a target-selection demand, not an excuse to stop
+// behaving like the player configured.
+void apply_rage_lock(config::combat_profile::resolved_config& cfg)
+{
+    const auto& settings = features::hvh::controller().settings;
+    if (settings.enable_rage == 0)
+        return;
+
+    cfg.aimbot.enabled = true;
+    cfg.aimbot.activation_mode = config::combat_profile::activation::always;
+    cfg.aimbot.fov_config.selection = config::combat_profile::fov_settings::fixed;
+    if (settings.rage_fov > 0)
+        cfg.aimbot.fov = settings.rage_fov;
+    if (settings.rage_min_damage > 0)
+        cfg.aimbot.min_damage = static_cast<float>(settings.rage_min_damage);
+    cfg.aimbot.lethal_only = false;
+    cfg.aimbot.hitbox_parts = config::combat_profile::aim_part::all;
+    cfg.aimbot.checks.walls = settings.rage_autowall != 0 ? config::combat_profile::wall_policy::penetration
+                              : config::combat_profile::wall_policy::block;
+    // The module steering silently is the rage setting; the transport that carries it is chosen per pass.
+    cfg.aimbot.silent = cfg.aimbot.silent || settings.rage_silent != 0;
+}
+} // namespace
+
 // The overlay's exit key calls this on the render thread while the combat worker is inside tick(); the worker
 // also calls it itself when the pass goes inactive. The serialises against tick() so neither can observe the
 // other halfway through a state change, which is what used to lose a trigger release.
@@ -289,7 +319,7 @@ void aimbot_t::publish_indicator(const config::combat_profile::aimbot& cfg, cons
     // head lock, so the ring sits exactly on the head and not on whichever multipoint the aim chose, and the
     // aim point for any other hitgroup, because a chest lock genuinely shoots at the chest.
     m_indicator_silent_ring = false;
-    if (cfg.silent && command_steering().healthy())
+    if (cfg.silent && command_steering().live())
     {
         auto centre = point;
         const auto head_joint = static_cast<int>(game::rules::joint_id::head);
@@ -339,7 +369,7 @@ bool aimbot_t::select_and_aim(const combat_frame& frame, const config::combat_pr
     // first one, so silent aim still cannot reach outside the view cone to start with.
     const auto max_silent_turn = std::clamp(cfg.aimbot.silent_max_turn, 5.0f, 35.0f);
     auto selection_reference = frame.view_angles;
-    if (cfg.aimbot.silent && command_steering().healthy() && m_aim_pawn != 0 && m_aim_virtual_angles_valid)
+    if (cfg.aimbot.silent && command_steering().live() && m_aim_pawn != 0 && m_aim_virtual_angles_valid)
     {
         const auto turned = std::hypot(m_aim_virtual_angles.x - frame.view_angles.x,
                                        foundation::wrap_yaw(m_aim_virtual_angles.y - frame.view_angles.y));
@@ -410,7 +440,8 @@ void aimbot_t::tick_state()
     }
 
     const auto now = std::chrono::steady_clock::now();
-    const auto requested_cfg = runtime_config()->combat.get(game::local_player().weapon_type());
+    auto requested_cfg = runtime_config()->combat.get(game::local_player().weapon_type());
+    apply_rage_lock(requested_cfg);
     const auto trigger_activation_active =
         requested_cfg.triggerbot.enabled && config::combat_profile::activation_active(
                                                 requested_cfg.triggerbot.activation_mode, requested_cfg.triggerbot.key);
@@ -474,7 +505,8 @@ void aimbot_t::tick_state()
         return;
     }
 
-    const auto cfg = runtime_config()->combat.get(ctx.weapon_type);
+    auto cfg = runtime_config()->combat.get(ctx.weapon_type);
+    apply_rage_lock(cfg);
     const auto pawn = game::local_player().pawn();
     observe_shots_fired(pawn);
 #if defined(VESTA_SEED_LOG) && VESTA_SEED_LOG

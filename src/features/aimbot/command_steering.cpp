@@ -1,6 +1,7 @@
 #include <stdafx.hpp>
 #include <features/aimbot/command_steering.hpp>
 #include <diagnostics/journal.hpp>
+#include <features/hvh/hvh.hpp>
 #include <game/memory/bound_services.hpp>
 
 namespace features::aimbot
@@ -44,6 +45,14 @@ void command_steering_t::publish(const foundation::vec3& angles) noexcept
     m_angles.store(pack_angles(pitch, yaw), std::memory_order_relaxed);
     // Released after the angle so a reader that sees the new stamp also sees the angle it belongs to.
     m_published_at.store(stamp, std::memory_order_release);
+
+    // The second transport carries the same approved angle, not a second decision about it. Mirroring here
+    // rather than at the call sites is what keeps the two from ever disagreeing: both of them see exactly the
+    // value that was validated and clamped above.
+    if (features::hvh::controller().aim_mirror_armed())
+    {
+        features::hvh::controller().publish_aim(pitch, yaw);
+    }
 }
 
 void command_steering_t::clear() noexcept
@@ -53,6 +62,9 @@ void command_steering_t::clear() noexcept
     m_angles.store(0, std::memory_order_relaxed);
     m_last_stamp = 0;
     m_reported_unavailable = false;
+    // Withdrawn from the module too, on every path that withdraws it here. A request the module still holds
+    // would keep steering commands after the target, the approval or the transport itself went away.
+    features::hvh::controller().clear_aim();
     // The failure count is deliberately not reset here: clear() runs on every pass that aims with the mouse,
     // and that would erase the very evidence that made the aim pass fall back.
 }
@@ -149,6 +161,11 @@ bool command_steering_t::armed() const noexcept
 bool command_steering_t::available() const noexcept
 {
     return game::bound_memory().process.writable();
+}
+
+bool command_steering_t::live() const noexcept
+{
+    return healthy() || features::hvh::controller().aim_mirror_armed();
 }
 
 void command_steering_t::tick()
