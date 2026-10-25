@@ -18,9 +18,11 @@ jobs:
         run: cmake --preset release
       - name: Build
         run: cmake --build --preset release --parallel
-      - name: Upload executable
+      - name: Upload built binaries
         uses: actions/upload-artifact@v4
         with:
           name: vesta-windows-x64
-          path: build/bin/vesta.exe
+          path: |
+            build/bin/vesta.exe
+            build/bin/vesta_hvh.dll
           if-no-files-found: error
