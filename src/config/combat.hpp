@@ -221,6 +221,9 @@ struct combat_profile
         int aimbot_smoothing{5};
         int aimbot_humanize{35};
         bool aimbot_autowall{true};
+        // Trades damage for reach: a shot that would die in a wall keeps enough of its damage to be worth
+        // taking. Global by choice - it changes the ballistics model, not a weapon's manners.
+        bool extreme_wall{false};
         float aimbot_min_damage{65.0f};
         bool aimbot_min_damage_override_enabled{true};
         float aimbot_min_damage_override{10.0f};

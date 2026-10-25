@@ -1,4 +1,5 @@
 #include <stdafx.hpp>
+#include <config/settings.hpp>
 #include <foundation/identity.hpp>
 #include <simulation/aim_parts.hpp>
 #include <game/state/services.hpp>
@@ -10,6 +11,16 @@
 
 namespace simulation
 {
+namespace
+{
+// Extreme wall penetration is a global switch, and it is read from the published snapshot rather than the live
+// settings object: the damage solver runs on the combat worker while the menu edits on the render thread.
+[[nodiscard]] bool extreme_wall() noexcept
+{
+    const auto snapshot = config::get_runtime_snapshot();
+    return snapshot && snapshot->combat.global.extreme_wall;
+}
+} // namespace
 
 namespace detail
 {
@@ -173,7 +184,7 @@ bool ballistics_t::penetration::run_seed(const foundation::vec3& origin, const f
     const auto collision = simulation::collision().build_segments(std::move(hits), target_distance);
     const auto passage =
         detail::pass_through_world(collision, target_distance, m_weapon_data.penetration, m_weapon_data.damage,
-                                   m_weapon_data.range_modifier, allow_penetration);
+                                   m_weapon_data.range_modifier, allow_penetration, extreme_wall());
     if (!passage)
     {
         return false;
@@ -225,7 +236,8 @@ bool ballistics_t::penetration::can(const foundation::vec3& start, const foundat
     std::erase_if(all_hits, [target_distance](const auto& hit) { return hit.distance > target_distance; });
     collision = simulation::collision().build_segments(std::move(all_hits), target_distance);
     const auto passage = detail::pass_through_world(collision, target_distance, m_weapon_data.penetration,
-                                                    m_weapon_data.damage, m_weapon_data.range_modifier, true);
+                                                    m_weapon_data.damage, m_weapon_data.range_modifier, true,
+                                                    extreme_wall());
     if (!passage)
         return false;
 

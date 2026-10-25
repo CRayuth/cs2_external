@@ -766,6 +766,7 @@ const std::unordered_map<std::string_view, const char*>& russian()
         {"Fake Down", "Ложный вниз"},
         {"Spin Speed", "Скорость вращения"},
         {"Third Person", "От третьего лица"},
+        {"Extreme Wall", "Экстремальное пробитие"},
 
         // --- esp editor -------------------------------------------------
         {"ESP EDITOR", "РЕДАКТОР ESP"},

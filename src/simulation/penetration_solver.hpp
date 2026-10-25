@@ -17,7 +17,8 @@ struct passage_result
 
 [[nodiscard]] inline std::optional<passage_result>
 pass_through_world(const simulation::collision_world::segment_build_result& collision, float target_distance,
-                   float weapon_penetration, float initial_damage, float range_modifier, bool allow_penetration)
+                   float weapon_penetration, float initial_damage, float range_modifier, bool allow_penetration,
+                   bool extreme = false)
 {
     if (!std::isfinite(target_distance) || target_distance < 0.0f || !std::isfinite(initial_damage) ||
         initial_damage < 1.0f || !std::isfinite(weapon_penetration) || weapon_penetration < 0.0f ||
@@ -58,7 +59,10 @@ pass_through_world(const simulation::collision_world::segment_build_result& coll
                 factor = std::min(factor, modifier);
             }
             const auto thickness = record.end_distance - record.start_distance;
-            auto damage_fraction = 0.16f;
+            // Extreme penetration is a cheaper traversal of the same materials, not a different solver: the wall
+            // penalty, the weapon term and the thickness term all shrink, and the rest of the rules - four
+            // surfaces at most, the range limit, the material table - still bind.
+            auto damage_fraction = extreme ? 0.10f : 0.16f;
             if (factor >= 0.1f && entrance.surface_type == exit.surface_type)
             {
                 const auto material = entrance.surface_type;
@@ -79,9 +83,11 @@ pass_through_world(const simulation::collision_world::segment_build_result& coll
                 }
             }
             const auto resistance = std::max(1.0f / factor, 0.0f);
-            const auto weapon_loss = std::max((3.0f / weapon_penetration) * 1.25f, 0.0f);
-            const auto loss = thickness * thickness * resistance / 24.0f +
-                              (weapon_loss * resistance * 3.0f + damage_fraction * state.damage);
+            const auto weapon_loss =
+                extreme ? std::max(2.0f / weapon_penetration, 0.0f)
+                        : std::max((3.0f / weapon_penetration) * 1.25f, 0.0f);
+            const auto loss = thickness * thickness * resistance / (extreme ? 60.0f : 24.0f) +
+                              (weapon_loss * resistance * (extreme ? 1.5f : 3.0f) + damage_fraction * state.damage);
             state.damage -= std::max(loss, 0.0f);
             ++state.penetrations;
         }

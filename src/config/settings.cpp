@@ -70,6 +70,7 @@ static void to_json(json& j, const combat_profile::global_settings& g)
              {"aimbot_smoothing", g.aimbot_smoothing},
              {"aimbot_humanize", g.aimbot_humanize},
              {"aimbot_autowall", g.aimbot_autowall},
+             {"extreme_wall", g.extreme_wall},
              {"aimbot_min_damage", g.aimbot_min_damage},
              {"aimbot_min_damage_override_enabled", g.aimbot_min_damage_override_enabled},
              {"aimbot_min_damage_override", g.aimbot_min_damage_override},
@@ -137,6 +138,7 @@ static void from_json(const json& j, combat_profile::global_settings& g)
     read_field(j, "aimbot_smoothing", g.aimbot_smoothing);
     read_field(j, "aimbot_humanize", g.aimbot_humanize);
     read_field(j, "aimbot_autowall", g.aimbot_autowall);
+    read_field(j, "extreme_wall", g.extreme_wall);
     read_field(j, "aimbot_min_damage", g.aimbot_min_damage);
     read_field(j, "aimbot_min_damage_override_enabled", g.aimbot_min_damage_override_enabled);
     read_field(j, "aimbot_min_damage_override", g.aimbot_min_damage_override);
