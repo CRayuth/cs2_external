@@ -436,3 +436,28 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(nlohmann_json)
 target_link_libraries(${PROJECT_NAME} PRIVATE nlohmann_json::nlohmann_json)
+
+# Injector payload: a self-contained DLL loaded into the game at runtime. It is deliberately not part of
+# vesta_sources. It uses no precompiled header, no third-party library and no project header other than the
+# shared IPC contract, so the layout of that contract is the only thing the two binaries have to agree on.
+add_library(vesta_hvh SHARED
+    src/hvh/dllmain.cpp
+    src/hvh/hvh_features.cpp
+)
+target_include_directories(vesta_hvh PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(vesta_hvh PRIVATE user32)
+if(MSVC)
+    target_compile_options(vesta_hvh PRIVATE /utf-8 /W4)
+    target_link_options(vesta_hvh PRIVATE $<$<CONFIG:Release>:/OPT:REF>)
+endif()
+set_target_properties(vesta_hvh PROPERTIES OUTPUT_NAME "vesta_hvh" PDB_NAME "vesta_hvh")
+# The runtime directory variables are set per configuration, because a Visual Studio generator is
+# multi-config and would otherwise drop the module into build/bin/<Config> instead of beside vesta.exe.
+set_target_properties(vesta_hvh PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/build/bin")
+foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+    set_target_properties(vesta_hvh PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY_${config} "${CMAKE_SOURCE_DIR}/build/bin"
+        PDB_OUTPUT_DIRECTORY_${config} "${CMAKE_SOURCE_DIR}/build/bin"
+    )
+endforeach()
+add_dependencies(${PROJECT_NAME} vesta_hvh)
