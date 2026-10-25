@@ -240,9 +240,9 @@ void menu_t::draw_sidebar()
         }
     }
 
-    static constexpr const char* labels[]{"Aimbot", "Triggerbot", "Visuals", "Misc"};
+    static constexpr const char* labels[]{"Aimbot", "Triggerbot", "Visuals", "Misc", "HVH"};
     ImGui::SetCursorPos({20.0f, 112.0f});
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 5; ++i)
     {
         ImGui::SetCursorPosX(20.0f);
         ImGui::PushID(i);
@@ -253,7 +253,7 @@ void menu_t::draw_sidebar()
             reset_content_animation();
         }
         ImGui::PopID();
-        if (i != 3)
+        if (i != 4)
             ImGui::Dummy({0.0f, 6.0f});
     }
 
@@ -274,8 +274,10 @@ void menu_t::draw_content()
         draw_triggerbot();
     else if (m_page == 2)
         draw_visuals();
-    else
+    else if (m_page == 3)
         draw_misc();
+    else
+        draw_hvh();
 
     ImGui::EndChild();
 }

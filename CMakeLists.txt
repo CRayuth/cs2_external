@@ -167,6 +167,7 @@ set(vesta_sources
     src/ui/menu/triggerbot_page.cpp
     src/ui/menu/visuals_page.cpp
     src/ui/menu/misc_page.cpp
+    src/ui/menu/hvh_page.cpp
     src/ui/menu/configs_page.cpp
     src/ui/menu/scripts_page.cpp
     src/ui/menu/library_widgets.cpp

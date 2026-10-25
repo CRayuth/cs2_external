@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <chrono>
 
 namespace ui
 {
@@ -33,6 +34,7 @@ private:
     void draw_triggerbot();
     void draw_visuals();
     void draw_misc();
+    void draw_hvh();
     void reset_content_animation();
 
     std::atomic<bool> m_open{};
@@ -43,6 +45,10 @@ private:
     int m_weapon_group{-1};
     int m_visual_group{};
     int m_misc_group{};
+    // The inject button waits for a second click: loading a module into the game is not a setting.
+    bool m_hvh_inject_pending{};
+    // When hvh.json was last written, so dragging a slider on the HvH page cannot rewrite the file per frame.
+    std::chrono::steady_clock::time_point m_hvh_saved_at{};
     float m_content_animation{1.0f};
     float m_visual_editor_animation{};
     bool m_preview_orbiting{};

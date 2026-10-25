@@ -25,7 +25,23 @@ void apply_rage_lock(config::combat_profile::resolved_config& cfg)
     if (settings.rage_min_damage > 0)
         cfg.aimbot.min_damage = static_cast<float>(settings.rage_min_damage);
     cfg.aimbot.lethal_only = false;
-    cfg.aimbot.hitbox_parts = config::combat_profile::aim_part::all;
+    // The module names one body region; this tree aims at a mask of parts. The chest choices and the pelvis all
+    // land on "body", and "Nearest" says any part will do rather than naming one.
+    switch (static_cast<vesta::hvh_shared::hitbox_mode>(settings.rage_hitbox))
+    {
+    case vesta::hvh_shared::hitbox_mode::head:
+        cfg.aimbot.hitbox_parts = config::combat_profile::aim_part::head;
+        break;
+    case vesta::hvh_shared::hitbox_mode::upper_chest:
+    case vesta::hvh_shared::hitbox_mode::chest:
+    case vesta::hvh_shared::hitbox_mode::pelvis:
+        cfg.aimbot.hitbox_parts = config::combat_profile::aim_part::body;
+        break;
+    case vesta::hvh_shared::hitbox_mode::nearest:
+    default:
+        cfg.aimbot.hitbox_parts = config::combat_profile::aim_part::all;
+        break;
+    }
     cfg.aimbot.checks.walls = settings.rage_autowall != 0 ? config::combat_profile::wall_policy::penetration
                               : config::combat_profile::wall_policy::block;
     // The module steering silently is the rage setting; the transport that carries it is chosen per pass.
